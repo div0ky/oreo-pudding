@@ -1,0 +1,11 @@
+node_modules
+.git
+.gitignore
+.env
+*.log
+test-bin
+Dockerfile
+.dockerignore
+implementation_plan.md
+task.md
+walkthrough.md
