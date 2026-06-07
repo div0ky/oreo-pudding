@@ -5,11 +5,20 @@ import { CalendarPath } from "../../../domain/calendar/value-objects/CalendarPat
 import type { ICalDavRepository } from "../../../domain/calendar/ICalDavRepository";
 import { formatInTimeZone, isValidTimeZone } from "../../utils/TimeZoneHelper";
 
+/**
+ * Query handler that handles retrieving calendar events across all calendars.
+ */
 export class RetrieveAllCalendarEventsQueryHandler
   implements IQueryHandler<RetrieveAllCalendarEventsQuery, CalendarEventsDto[]>
 {
+  /**
+   * Creates an instance of RetrieveAllCalendarEventsQueryHandler.
+   */
   constructor(private readonly repository: ICalDavRepository) {}
 
+  /**
+   * Orchestrates discovering calendars and retrieving events from each of them.
+   */
   public async handle(query: RetrieveAllCalendarEventsQuery): Promise<CalendarEventsDto[]> {
     const appleId = process.env.APP_ID || "";
     const appSpecificPassword = process.env.APP_PASS || "";

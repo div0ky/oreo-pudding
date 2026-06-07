@@ -8,9 +8,15 @@ import { CalendarEvent } from "../../../domain/calendar/CalendarEvent";
 import type { ICalDavRepository } from "../../../domain/calendar/ICalDavRepository";
 import type { CalDavSerializationStrategy } from "../../../infrastructure/calendar/serialization/CalDavSerializationStrategy";
 
+/**
+ * Command handler that orchestrates the creation of calendar events.
+ */
 export class CreateCalendarEventCommandHandler
   implements ICommandHandler<CreateCalendarEventCommand, string>
 {
+  /**
+   * Creates an instance of CreateCalendarEventCommandHandler.
+   */
   constructor(
     private readonly repository: ICalDavRepository,
     private readonly serializationStrategy: CalDavSerializationStrategy

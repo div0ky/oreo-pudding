@@ -5,6 +5,9 @@ import { EventDetails } from "../../../domain/calendar/value-objects/EventDetail
 import type { CalDavSerializationStrategy } from "./CalDavSerializationStrategy";
 import { parseInTimeZone, isValidTimeZone } from "../../../application/utils/TimeZoneHelper";
 
+/**
+ * Concrete implementation of CalDavSerializationStrategy that serializes to and from standard RFC 5545 iCalendar format.
+ */
 export class ICalSerializationStrategy implements CalDavSerializationStrategy {
   /**
    * Transforms a CalendarEvent aggregate into a physical iCalendar string payload.

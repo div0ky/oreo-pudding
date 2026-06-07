@@ -7,14 +7,23 @@ import { CalendarPath } from "../../../domain/calendar/value-objects/CalendarPat
 import type { ICalDavRepository } from "../../../domain/calendar/ICalDavRepository";
 import type { CalDavSerializationStrategy } from "../../../infrastructure/calendar/serialization/CalDavSerializationStrategy";
 
+/**
+ * Command handler that orchestrates updating a calendar event.
+ */
 export class UpdateCalendarEventCommandHandler
   implements ICommandHandler<UpdateCalendarEventCommand, string>
 {
+  /**
+   * Creates an instance of UpdateCalendarEventCommandHandler.
+   */
   constructor(
     private readonly repository: ICalDavRepository,
     private readonly serializationStrategy: CalDavSerializationStrategy
   ) {}
 
+  /**
+   * Orchestrates retrieving, updating, and saving a calendar event.
+   */
   public async handle(command: UpdateCalendarEventCommand): Promise<string> {
     const credentials = new AppleCredentials(command.appleId, command.appSpecificPassword);
     

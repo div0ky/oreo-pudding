@@ -7,6 +7,9 @@ import type { ToolStrategy } from "./ToolStrategy";
 import { ToolExecutedEvent } from "./events/ToolExecutedEvent";
 import { ToolRegisteredEvent } from "./events/ToolRegisteredEvent";
 
+/**
+ * Domain Aggregate Root representing a registered tool in the MCP server.
+ */
 export class Tool extends AggregateRoot<ToolId> {
   private constructor(
     id: ToolId,
@@ -19,6 +22,9 @@ export class Tool extends AggregateRoot<ToolId> {
   }
 
   // Factory Method Pattern
+  /**
+   * Factory method to create a new Tool aggregate and register its creation event.
+   */
   public static create(
     id: ToolId,
     name: ToolName,
@@ -31,6 +37,9 @@ export class Tool extends AggregateRoot<ToolId> {
     return tool;
   }
 
+  /**
+   * Executes the tool's strategy and publishes execution events.
+   */
   public async execute(args: Record<string, any>): Promise<string> {
     const start = performance.now();
     try {

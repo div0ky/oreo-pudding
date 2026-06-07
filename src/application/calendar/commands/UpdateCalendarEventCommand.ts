@@ -1,6 +1,12 @@
 import type { ICommand } from "../../seedwork/ICommand";
 
+/**
+ * Command to update details or date range of an existing calendar event.
+ */
 export class UpdateCalendarEventCommand implements ICommand {
+  /**
+   * Creates an instance of UpdateCalendarEventCommand.
+   */
   constructor(
     public readonly appleId: string,
     public readonly appSpecificPassword: string,

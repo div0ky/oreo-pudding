@@ -1,3 +1,6 @@
+/**
+ * Checks if a given string is a valid IANA time zone identifier.
+ */
 export function isValidTimeZone(timeZone: string): boolean {
   try {
     Intl.DateTimeFormat(undefined, { timeZone });
@@ -7,6 +10,9 @@ export function isValidTimeZone(timeZone: string): boolean {
   }
 }
 
+/**
+ * Parses a date string within a specific time zone, correctly handling floating times.
+ */
 export function parseInTimeZone(dateStr: string, timeZone: string = "America/Chicago"): Date {
   const trimmed = dateStr.trim();
   // Check if there is an explicit timezone indicator (Z or +/-offset)
@@ -65,6 +71,9 @@ export function parseInTimeZone(dateStr: string, timeZone: string = "America/Chi
   return new Date(utcGuess.getTime() + offset);
 }
 
+/**
+ * Formats a Date object as an ISO 8601 string adjusted to a specific time zone.
+ */
 export function formatInTimeZone(date: Date, timeZone: string = "America/Chicago"): string {
   const formatter = new Intl.DateTimeFormat("en-US", {
     timeZone,

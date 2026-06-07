@@ -1,6 +1,12 @@
 import type { ICommand } from "../../seedwork/ICommand";
 
+/**
+ * Command to create a new calendar event.
+ */
 export class CreateCalendarEventCommand implements ICommand {
+  /**
+   * Creates an instance of CreateCalendarEventCommand.
+   */
   constructor(
     public readonly appleId: string,
     public readonly appSpecificPassword: string,

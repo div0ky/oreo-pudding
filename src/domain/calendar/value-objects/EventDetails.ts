@@ -7,7 +7,13 @@ interface EventDetailsProps {
   url: string;
 }
 
+/**
+ * Value Object encapsulating the details of a calendar event (title, description, location, URL).
+ */
 export class EventDetails extends ValueObject<EventDetailsProps> {
+  /**
+   * Createsvalidated EventDetails.
+   */
   constructor(
     title: string,
     description: string = "",
@@ -25,18 +31,30 @@ export class EventDetails extends ValueObject<EventDetailsProps> {
     });
   }
 
+  /**
+   * Gets the event title.
+   */
   public get title(): string {
     return this.props.title;
   }
 
+  /**
+   * Gets the event description/notes.
+   */
   public get description(): string {
     return this.props.description;
   }
 
+  /**
+   * Gets the event physical/virtual location.
+   */
   public get location(): string {
     return this.props.location;
   }
 
+  /**
+   * Gets the event associated URL.
+   */
   public get url(): string {
     return this.props.url;
   }

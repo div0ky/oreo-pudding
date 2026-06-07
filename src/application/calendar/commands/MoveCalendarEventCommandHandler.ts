@@ -6,14 +6,23 @@ import { CalendarPath } from "../../../domain/calendar/value-objects/CalendarPat
 import type { ICalDavRepository } from "../../../domain/calendar/ICalDavRepository";
 import type { CalDavSerializationStrategy } from "../../../infrastructure/calendar/serialization/CalDavSerializationStrategy";
 
+/**
+ * Command handler that handles moving a calendar event.
+ */
 export class MoveCalendarEventCommandHandler
   implements ICommandHandler<MoveCalendarEventCommand, string>
 {
+  /**
+   * Creates an instance of MoveCalendarEventCommandHandler.
+   */
   constructor(
     private readonly repository: ICalDavRepository,
     private readonly serializationStrategy: CalDavSerializationStrategy
   ) {}
 
+  /**
+   * Orchestrates locating and updating the date range of a calendar event.
+   */
   public async handle(command: MoveCalendarEventCommand): Promise<string> {
     const appleId = process.env.APP_ID || "";
     const appSpecificPassword = process.env.APP_PASS || "";

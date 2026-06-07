@@ -3,9 +3,18 @@ import { ListCalendarsQuery, type CalendarDto } from "./ListCalendarsQuery";
 import { AppleCredentials } from "../../../domain/calendar/value-objects/AppleCredentials";
 import type { ICalDavRepository } from "../../../domain/calendar/ICalDavRepository";
 
+/**
+ * Query handler that handles listing calendars for an account.
+ */
 export class ListCalendarsQueryHandler implements IQueryHandler<ListCalendarsQuery, CalendarDto[]> {
+  /**
+   * Creates an instance of ListCalendarsQueryHandler.
+   */
   constructor(private readonly repository: ICalDavRepository) {}
 
+  /**
+   * Orchestrates discovering calendars using the CalDAV repository.
+   */
   public async handle(query: ListCalendarsQuery): Promise<CalendarDto[]> {
     const credentials = new AppleCredentials(query.appleId, query.appSpecificPassword);
     const calendars = await this.repository.discoverCalendars(credentials);

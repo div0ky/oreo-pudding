@@ -3,6 +3,9 @@ import { EventId } from "./value-objects/EventId";
 import { DateRange } from "./value-objects/DateRange";
 import { EventDetails } from "./value-objects/EventDetails";
 
+/**
+ * Aggregate Root representing a calendar event.
+ */
 export class CalendarEvent extends AggregateRoot<EventId> {
   private _dateRange: DateRange;
   private _details: EventDetails;
@@ -17,10 +20,16 @@ export class CalendarEvent extends AggregateRoot<EventId> {
     this._details = details;
   }
 
+  /**
+   * Gets the date range of the calendar event.
+   */
   public get dateRange(): DateRange {
     return this._dateRange;
   }
 
+  /**
+   * Gets the details (title, description, etc.) of the calendar event.
+   */
   public get details(): EventDetails {
     return this._details;
   }

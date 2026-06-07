@@ -5,7 +5,13 @@ interface AppleCredentialsProps {
   appSpecificPassword: string;
 }
 
+/**
+ * Value Object encapsulating Apple ID and App-Specific Password with validation.
+ */
 export class AppleCredentials extends ValueObject<AppleCredentialsProps> {
+  /**
+   * Creates validated AppleCredentials.
+   */
   constructor(appleId: string, appSpecificPassword: string) {
     if (!appleId || appleId.trim() === "") {
       throw new Error("Apple ID cannot be empty.");
@@ -33,10 +39,16 @@ export class AppleCredentials extends ValueObject<AppleCredentialsProps> {
     });
   }
 
+  /**
+   * Gets the Apple ID email address.
+   */
   public get appleId(): string {
     return this.props.appleId;
   }
 
+  /**
+   * Gets the App-Specific Password.
+   */
   public get appSpecificPassword(): string {
     return this.props.appSpecificPassword;
   }

@@ -1,3 +1,6 @@
+/**
+ * Base abstract class representing a Domain Entity with unique identity.
+ */
 export abstract class Entity<TId> {
   public readonly id: TId;
 
@@ -5,6 +8,9 @@ export abstract class Entity<TId> {
     this.id = id;
   }
 
+  /**
+   * Compares the current entity with another entity to check for equality.
+   */
   public equals(object?: Entity<TId>): boolean {
     if (object === null || object === undefined) {
       return false;

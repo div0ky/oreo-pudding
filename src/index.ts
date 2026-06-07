@@ -43,7 +43,16 @@ mediator.registerQuery(RetrieveCalendarEventsQuery, retrieveHandler);
 mediator.registerQuery(ListCalendarsQuery, listCalendarsHandler);
 const retrieveAllHandler = new RetrieveAllCalendarEventsQueryHandler(repository);
 mediator.registerQuery(RetrieveAllCalendarEventsQuery, retrieveAllHandler);
-export function getCredentials(): { appleId: string; appSpecificPassword: string } {
+/**
+ * Retrieves Apple ID and App-Specific Password credentials from environment variables and validates their format.
+ */
+export function getCredentials(): { /**
+ * The validated Apple ID email address.
+ */
+appleId: string; /**
+ * The validated App-Specific Password.
+ */
+appSpecificPassword: string } {
   const appleId = process.env.APP_ID;
   const appSpecificPassword = process.env.APP_PASS;
 
@@ -116,6 +125,9 @@ export const moveCalendarEventSchema = z.object({
 });
 
 // 3. Configure the MCP Server instance factory
+/**
+ * Configures and initializes a new Model Context Protocol Server instance with calendar-specific tool schemas and handlers.
+ */
 export function createMcpServer(): Server {
   const s = new Server(
     {

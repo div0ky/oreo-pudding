@@ -10,8 +10,17 @@ interface CacheEntry<T> {
   revalidating: boolean;
 }
 
+/**
+ * CalDAV client repository implementation for syncing calendar data with iCloud.
+ */
 export class CalDavRepository implements ICalDavRepository {
-  private readonly calendarsCache = new Map<string, CacheEntry<{ name: string; path: string }[]>>();
+  private readonly calendarsCache = new Map<string, CacheEntry<{ /**
+   * The calendar display name.
+   */
+  name: string; /**
+   * The calendar HTTP path suffix.
+   */
+  path: string }[]>>();
   private readonly eventsQueryCache = new Map<string, CacheEntry<CalendarEvent[]>>();
   private readonly eventsByIdCache = new Map<string, CacheEntry<CalendarEvent | null>>();
 
@@ -309,16 +318,28 @@ export class CalDavRepository implements ICalDavRepository {
   }
 
   /**
-   * Discovers all available calendars for the user.
+   * Discovers all available calendars for the user, utilizing caching.
    */
   public async discoverCalendars(
     credentials: AppleCredentials
-  ): Promise<{ name: string; path: string }[]> {
+  ): Promise<{ /**
+   * The calendar name.
+   */
+  name: string; /**
+   * The calendar path.
+   */
+  path: string }[]> {
     const key = credentials.appleId;
     const now = Date.now();
     const cached = this.calendarsCache.get(key);
 
-    let data: { name: string; path: string }[];
+    let data: { /**
+     * The calendar name.
+     */
+    name: string; /**
+     * The calendar path.
+     */
+    path: string }[];
     let fetchedAt: number;
     let isStale = false;
 
@@ -366,7 +387,13 @@ export class CalDavRepository implements ICalDavRepository {
 
   private async discoverCalendarsLive(
     credentials: AppleCredentials
-  ): Promise<{ name: string; path: string }[]> {
+  ): Promise<{ /**
+   * The calendar name.
+   */
+  name: string; /**
+   * The calendar path.
+   */
+  path: string }[]> {
     // Step 1: Query current-user-principal on /
     const principalUrl = "https://caldav.icloud.com/";
     const principalHeaders = new Headers();
@@ -477,7 +504,13 @@ export class CalDavRepository implements ICalDavRepository {
     const listXmlText = await listResponse.text();
     const responseMatches = listXmlText.match(/<[^:]*:?response[\s>][\s\S]*?<\/[^:]*:?response>/gi) || [];
 
-    const calendars: { name: string; path: string }[] = [];
+    const calendars: { /**
+     * The calendar name.
+     */
+    name: string; /**
+     * The calendar path.
+     */
+    path: string }[] = [];
 
     for (const responseBlock of responseMatches) {
       // Check if it's a calendar collection
@@ -524,8 +557,20 @@ export class CalDavRepository implements ICalDavRepository {
    * Selection heuristic to score and rank discovered calendars to find the best default.
    */
   public getDefaultCalendar(
-    calendars: { name: string; path: string }[]
-  ): { name: string; path: string } {
+    calendars: { /**
+     * The calendar name.
+     */
+    name: string; /**
+     * The calendar path.
+     */
+    path: string }[]
+  ): { /**
+   * The default calendar name.
+   */
+  name: string; /**
+   * The default calendar path.
+   */
+  path: string } {
     const rankCalendar = (name: string, path: string): number => {
       const n = name.toLowerCase();
       const p = path.toLowerCase();

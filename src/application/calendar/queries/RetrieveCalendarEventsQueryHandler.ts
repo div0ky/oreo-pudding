@@ -5,11 +5,20 @@ import { CalendarPath } from "../../../domain/calendar/value-objects/CalendarPat
 import type { ICalDavRepository } from "../../../domain/calendar/ICalDavRepository";
 import { formatInTimeZone, isValidTimeZone } from "../../utils/TimeZoneHelper";
 
+/**
+ * Query handler that handles retrieving calendar events.
+ */
 export class RetrieveCalendarEventsQueryHandler
   implements IQueryHandler<RetrieveCalendarEventsQuery, CalendarEventDto[]>
 {
+  /**
+   * Creates an instance of RetrieveCalendarEventsQueryHandler.
+   */
   constructor(private readonly repository: ICalDavRepository) {}
 
+  /**
+   * Orchestrates retrieving events from a specific calendar using CalDAV.
+   */
   public async handle(query: RetrieveCalendarEventsQuery): Promise<CalendarEventDto[]> {
     const credentials = new AppleCredentials(query.appleId, query.appSpecificPassword);
     

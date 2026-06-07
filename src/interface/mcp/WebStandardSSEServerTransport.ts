@@ -20,15 +20,24 @@ export class WebStandardSSEServerTransport implements Transport {
   onerror?: (error: Error) => void;
   onmessage?: <T extends JSONRPCMessage>(message: T, extra?: MessageExtraInfo) => void;
 
+  /**
+   * Creates an instance of WebStandardSSEServerTransport with the target message endpoint.
+   */
   constructor(endpoint: string) {
     this._endpoint = endpoint;
     this._sessionId = crypto.randomUUID();
   }
 
+  /**
+   * Gets the unique session identifier for this transport connection.
+   */
   get sessionId(): string {
     return this._sessionId;
   }
 
+  /**
+   * Starts the transport; a no-op as initialization is handled on createResponse.
+   */
   async start(): Promise<void> {
     // start is a no-op; initialization is handled in createResponse()
   }
@@ -107,6 +116,9 @@ export class WebStandardSSEServerTransport implements Transport {
     }
   }
 
+  /**
+   * Closes the SSE transport stream controller and connection.
+   */
   async close(): Promise<void> {
     if (!this._closed) {
       this._closed = true;
@@ -119,6 +131,9 @@ export class WebStandardSSEServerTransport implements Transport {
     }
   }
 
+  /**
+   * Sends a JSON-RPC message over the established SSE event stream.
+   */
   async send(message: JSONRPCMessage, options?: TransportSendOptions): Promise<void> {
     if (this._closed || !this._controller) {
       throw new Error("Transport is closed or not connected");

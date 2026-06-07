@@ -9,11 +9,17 @@ import type { IMediator } from "../../application/seedwork/IMediator";
 import { ListToolsQuery } from "../../application/tool/queries/ListToolsQuery";
 import { ExecuteToolCommand } from "../../application/tool/commands/ExecuteToolCommand";
 
+/**
+ * Adapter class that wraps the MCP SDK Server and binds it to the CQRS Mediator.
+ */
 export class McpServerAdapter {
   private readonly server: Server;
   private readonly serverName: string;
   private readonly serverVersion: string;
 
+  /**
+   * Creates an instance of McpServerAdapter.
+   */
   constructor(
     private readonly mediator: IMediator,
     serverName = "oreo-pudding-mcp",
@@ -93,6 +99,9 @@ export class McpServerAdapter {
     return s;
   }
 
+  /**
+   * Starts the MCP server on either SSE (if PORT is set) or stdio transport.
+   */
   public async start(): Promise<void> {
     if (process.env.PORT) {
       const activeTransports = new Map<string, WebStandardSSEServerTransport>();

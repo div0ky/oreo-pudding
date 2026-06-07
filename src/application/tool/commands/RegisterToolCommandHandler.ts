@@ -8,12 +8,21 @@ import { ToolDescription } from "../../../domain/tool/ToolDescription";
 import { ToolSchema } from "../../../domain/tool/ToolSchema";
 import type { EventDispatcher } from "../../../infrastructure/events/EventDispatcher";
 
+/**
+ * Command handler that orchestrates registration of new tools.
+ */
 export class RegisterToolCommandHandler implements ICommandHandler<RegisterToolCommand, string> {
+  /**
+   * Creates an instance of RegisterToolCommandHandler.
+   */
   constructor(
     private readonly toolRepository: IToolRepository,
     private readonly eventDispatcher: EventDispatcher
   ) {}
 
+  /**
+   * Orchestrates tool creation, persistence, and event dispatching.
+   */
   public async handle(command: RegisterToolCommand): Promise<string> {
     const id = new ToolId(crypto.randomUUID());
     const name = new ToolName(command.name);
