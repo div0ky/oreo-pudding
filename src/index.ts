@@ -1,5 +1,6 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { WebStandardSSEServerTransport } from "./interface/mcp/WebStandardSSEServerTransport.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import {
   CallToolRequestSchema,
@@ -167,21 +168,26 @@ export const updateCalendarEventSchema = z.object({
     .optional()
 });
 
-// 3. Configure the MCP Server instance
-const server = new Server(
-  {
-    name: "apple-calendar-mcp",
-    version: "1.0.0"
-  },
-  {
-    capabilities: {
-      tools: {}
+// 3. Configure the MCP Server instance factory
+export function createMcpServer(): Server {
+  const s = new Server(
+    {
+      name: "apple-calendar-mcp",
+      version: "1.0.0"
+    },
+    {
+      capabilities: {
+        tools: {}
+      }
     }
-  }
-);
+  );
 
-// 4. Setup Request Handlers
-server.setRequestHandler(ListToolsRequestSchema, async () => {
+  setupMcpHandlers(s);
+  return s;
+}
+
+function setupMcpHandlers(s: Server) {
+  s.setRequestHandler(ListToolsRequestSchema, async () => {
   return {
     tools: [
       {
@@ -327,7 +333,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
   };
 });
 
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
+s.setRequestHandler(CallToolRequestSchema, async (request) => {
   const toolName = request.params.name;
 
   if (toolName === "create_calendar_event") {
@@ -555,23 +561,121 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     isError: true
   };
 });
+}
 
 // 5. Connect and listen using standard I/O streams or SSE transport depending on PORT env variable
 if (process.env.PORT) {
-  const transport = new WebStandardStreamableHTTPServerTransport({
+  const activeTransports = new Map<string, WebStandardSSEServerTransport>();
+
+  // Instantiate Streamable HTTP transport for backward compatibility
+  const streamableTransport = new WebStandardStreamableHTTPServerTransport({
     sessionIdGenerator: () => crypto.randomUUID(),
   });
-  await server.connect(transport);
+  const primaryMcpServer = createMcpServer();
+  await primaryMcpServer.connect(streamableTransport);
+
+  const corsHeaders = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, mcp-session-id, Last-Event-ID, mcp-protocol-version",
+    "Access-Control-Expose-Headers": "mcp-session-id, mcp-protocol-version"
+  };
+
   const port = parseInt(process.env.PORT, 10);
   Bun.serve({
     port,
     async fetch(req) {
-      return transport.handleRequest(req);
+      if (req.method === "OPTIONS") {
+        return new Response(null, { status: 204, headers: corsHeaders });
+      }
+
+      const url = new URL(req.url);
+      const accept = req.headers.get("accept");
+      const sessionIdHeader = req.headers.get("mcp-session-id");
+
+      // SSE Connection Endpoint (GET /sse or GET /)
+      if (req.method === "GET") {
+        if (url.pathname === "/sse") {
+          const transport = new WebStandardSSEServerTransport("/messages");
+          const sessionServer = createMcpServer();
+          await sessionServer.connect(transport);
+
+          activeTransports.set(transport.sessionId, transport);
+
+          transport.onclose = () => {
+            activeTransports.delete(transport.sessionId);
+          };
+
+          return transport.createResponse();
+        }
+
+        if (url.pathname === "/") {
+          // If we have a session header, delegate to streamable HTTP transport
+          if (sessionIdHeader) {
+            return streamableTransport.handleRequest(req);
+          }
+          // Otherwise, if client requests event-stream, treat as classic SSE GET connection
+          if (accept?.includes("text/event-stream")) {
+            const transport = new WebStandardSSEServerTransport("/messages");
+            const sessionServer = createMcpServer();
+            await sessionServer.connect(transport);
+
+            activeTransports.set(transport.sessionId, transport);
+
+            transport.onclose = () => {
+              activeTransports.delete(transport.sessionId);
+            };
+
+            return transport.createResponse();
+          }
+        }
+
+        // Health check endpoint (GET /health or GET /)
+        if (url.pathname === "/health" || url.pathname === "/") {
+          return new Response(
+            JSON.stringify({ status: "ok", message: "Apple Calendar MCP Server is active" }),
+            {
+              status: 200,
+              headers: {
+                "Content-Type": "application/json",
+                ...corsHeaders
+              }
+            }
+          );
+        }
+      }
+
+      // Message posting endpoint (POST /messages)
+      if (req.method === "POST") {
+        if (url.pathname === "/messages") {
+          const sessionId = url.searchParams.get("sessionId");
+          if (!sessionId) {
+            return new Response("Session ID required", { status: 400, headers: corsHeaders });
+          }
+          const transport = activeTransports.get(sessionId);
+          if (!transport) {
+            return new Response("Session not found/expired", { status: 404, headers: corsHeaders });
+          }
+          return transport.handlePostMessage(req);
+        }
+
+        // Delegate other POST requests (e.g. POST / or POST /mcp) to Streamable HTTP transport
+        return streamableTransport.handleRequest(req);
+      }
+
+      // Delegate DELETE requests (e.g. session termination) to Streamable HTTP transport
+      if (req.method === "DELETE") {
+        return streamableTransport.handleRequest(req);
+      }
+
+      return new Response("Not Found", { status: 404, headers: corsHeaders });
     }
   });
   console.error(`Apple Calendar CalDAV MCP Server listening on SSE transport (port ${port}).`);
 } else {
+  const stdioServer = createMcpServer();
   const transport = new StdioServerTransport();
-  await server.connect(transport);
+  await stdioServer.connect(transport);
   console.error("Apple Calendar CalDAV MCP Server listening on stdio transport.");
 }
+
