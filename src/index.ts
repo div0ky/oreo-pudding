@@ -33,13 +33,6 @@ mediator.registerCommand(UpdateCalendarEventCommand, updateHandler);
 
 // 2. Define Network Edge Validation Schema using Zod
 export const createCalendarEventSchema = z.object({
-  bearerToken: z
-    .string()
-    .min(1, "Bearer token is required.")
-    .refine(
-      (val) => val === process.env.BEARER_TOKEN,
-      "Unauthorized: The provided bearer token does not match the configured BEARER_TOKEN environment variable."
-    ),
   appleId: z
     .string()
     .optional()
@@ -78,13 +71,6 @@ export const createCalendarEventSchema = z.object({
 });
 
 export const retrieveCalendarEventsSchema = z.object({
-  bearerToken: z
-    .string()
-    .min(1, "Bearer token is required.")
-    .refine(
-      (val) => val === process.env.BEARER_TOKEN,
-      "Unauthorized: The provided bearer token does not match the configured BEARER_TOKEN environment variable."
-    ),
   appleId: z
     .string()
     .optional()
@@ -121,13 +107,6 @@ export const retrieveCalendarEventsSchema = z.object({
 });
 
 export const updateCalendarEventSchema = z.object({
-  bearerToken: z
-    .string()
-    .min(1, "Bearer token is required.")
-    .refine(
-      (val) => val === process.env.BEARER_TOKEN,
-      "Unauthorized: The provided bearer token does not match the configured BEARER_TOKEN environment variable."
-    ),
   appleId: z
     .string()
     .optional()
@@ -196,10 +175,6 @@ function setupMcpHandlers(s: Server) {
         inputSchema: {
           type: "object",
           properties: {
-            bearerToken: {
-              type: "string",
-              description: "Security bearer token used for authenticating with the MCP server"
-            },
             appleId: {
               type: "string",
               description: "Your Apple ID (email address) [optional, defaults to APP_ID env var]"
@@ -236,7 +211,6 @@ function setupMcpHandlers(s: Server) {
             }
           },
           required: [
-            "bearerToken",
             "title",
             "startDate",
             "endDate",
@@ -250,10 +224,6 @@ function setupMcpHandlers(s: Server) {
         inputSchema: {
           type: "object",
           properties: {
-            bearerToken: {
-              type: "string",
-              description: "Security bearer token used for authenticating with the MCP server"
-            },
             appleId: {
               type: "string",
               description: "Your Apple ID [optional, defaults to APP_ID env var]"
@@ -275,7 +245,7 @@ function setupMcpHandlers(s: Server) {
               description: "End date/time in ISO 8601 format (e.g. 2026-06-07T23:59:59Z) [optional]"
             }
           },
-          required: ["bearerToken", "calendarPath"]
+          required: ["calendarPath"]
         }
       },
       {
@@ -284,10 +254,6 @@ function setupMcpHandlers(s: Server) {
         inputSchema: {
           type: "object",
           properties: {
-            bearerToken: {
-              type: "string",
-              description: "Security bearer token used for authenticating with the MCP server"
-            },
             appleId: {
               type: "string",
               description: "Your Apple ID [optional, defaults to APP_ID env var]"
@@ -326,7 +292,7 @@ function setupMcpHandlers(s: Server) {
               description: "Updated end date/time in ISO 8601 format [optional]"
             }
           },
-          required: ["bearerToken", "calendarPath", "eventId"]
+          required: ["calendarPath", "eventId"]
         }
       }
     ]
@@ -592,6 +558,40 @@ if (process.env.PORT) {
       const url = new URL(req.url);
       const accept = req.headers.get("accept");
       const sessionIdHeader = req.headers.get("mcp-session-id");
+
+      // Verify Authorization header if BEARER_TOKEN is configured in environment,
+      // exempting public health checks (GET /health or GET / when not requesting SSE/sessions).
+      const isHealthCheck = (req.method === "GET" && (url.pathname === "/health" || url.pathname === "/")) &&
+                            !(accept?.includes("text/event-stream") || sessionIdHeader);
+
+      if (!isHealthCheck && process.env.BEARER_TOKEN) {
+        const authHeader = req.headers.get("Authorization");
+        if (!authHeader || !authHeader.startsWith("Bearer ")) {
+          return new Response(
+            JSON.stringify({ error: "Unauthorized: Missing or invalid Authorization header" }),
+            {
+              status: 401,
+              headers: {
+                "Content-Type": "application/json",
+                ...corsHeaders
+              }
+            }
+          );
+        }
+        const token = authHeader.substring(7).trim();
+        if (token !== process.env.BEARER_TOKEN) {
+          return new Response(
+            JSON.stringify({ error: "Unauthorized: Invalid Bearer Token" }),
+            {
+              status: 401,
+              headers: {
+                "Content-Type": "application/json",
+                ...corsHeaders
+              }
+            }
+          );
+        }
+      }
 
       // SSE Connection Endpoint (GET /sse or GET /)
       if (req.method === "GET") {

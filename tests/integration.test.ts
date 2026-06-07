@@ -143,7 +143,7 @@ describe("MCP Server JSON-RPC E2E Integration", () => {
       expect(createEventTool).toBeDefined();
       expect(createEventTool.description).toContain("Creates an event");
 
-      // 4. Call tool with invalid bearer token -> should return Validation Error / Unauthorized
+      // 4. Call tool with missing title parameter -> should return Validation Error
       const badCallResponse = await sendRequest({
         jsonrpc: "2.0",
         id: 3,
@@ -151,10 +151,8 @@ describe("MCP Server JSON-RPC E2E Integration", () => {
         params: {
           name: "create_calendar_event",
           arguments: {
-            bearerToken: "invalid-bearer-token",
             appleId,
             appSpecificPassword,
-            title: "Bad Auth Event",
             startDate: new Date(Date.now() + 60000).toISOString(),
             endDate: new Date(Date.now() + 120000).toISOString(),
             calendarPath: TEST_CALENDAR_PATH
@@ -178,7 +176,6 @@ describe("MCP Server JSON-RPC E2E Integration", () => {
         params: {
           name: "create_calendar_event",
           arguments: {
-            bearerToken,
             appleId,
             appSpecificPassword,
             title: "E2E Test Event via JSON-RPC",
@@ -229,14 +226,15 @@ describe("MCP Server JSON-RPC E2E Integration", () => {
 });
 
 describe("MCP Server SSE E2E Integration", () => {
-  test("should start up as HTTP server when PORT is provided and respond to SSE handshake", async () => {
+  test("should start up as HTTP server when PORT is provided and respond to SSE handshake with correct Authorization header", async () => {
     // Dynamic free port for testing
     const testPort = 55667;
 
-    // Spawn server process with PORT env variable
+    // Spawn server process with PORT and BEARER_TOKEN env variables
     const proc = Bun.spawn(["bun", "run", "src/index.ts"], {
       env: {
         ...process.env,
+        BEARER_TOKEN: "test-token-123",
         PORT: String(testPort)
       },
       stdout: "pipe",
@@ -253,7 +251,8 @@ describe("MCP Server SSE E2E Integration", () => {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Accept": "application/json, text/event-stream"
+          "Accept": "application/json, text/event-stream",
+          "Authorization": "Bearer test-token-123"
         },
         body: JSON.stringify({
           jsonrpc: "2.0",
@@ -283,6 +282,52 @@ describe("MCP Server SSE E2E Integration", () => {
       expect(text).toContain("event: message");
       expect(text).toContain("protocolVersion");
       expect(text).toContain("result");
+    } finally {
+      proc.kill();
+    }
+  });
+
+  test("should reject SSE handshake with 401 if Authorization header is invalid or missing", async () => {
+    // Dynamic free port for testing
+    const testPort = 55668;
+
+    // Spawn server process with PORT and BEARER_TOKEN env variables
+    const proc = Bun.spawn(["bun", "run", "src/index.ts"], {
+      env: {
+        ...process.env,
+        BEARER_TOKEN: "test-token-123",
+        PORT: String(testPort)
+      },
+      stdout: "pipe",
+      stderr: "pipe"
+    });
+
+    // Wait briefly for the server to spin up and bind to port
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
+    try {
+      const url = `http://localhost:${testPort}/`;
+      
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Accept": "application/json, text/event-stream",
+          "Authorization": "Bearer wrong-token"
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: {
+            protocolVersion: "2024-11-05"
+          }
+        })
+      });
+
+      expect(response.status).toBe(401);
+      const data = await response.json();
+      expect(data.error).toContain("Unauthorized");
     } finally {
       proc.kill();
     }

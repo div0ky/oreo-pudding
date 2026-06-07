@@ -227,7 +227,6 @@ describe("Zod Edge Validation Schema", () => {
       const { createCalendarEventSchema } = await import("../src/index.ts");
       
       const payload = {
-        bearerToken: "env-token",
         title: "Test Event",
         startDate: "2026-06-07T12:00:00Z",
         endDate: "2026-06-07T13:00:00Z",
@@ -260,7 +259,6 @@ describe("Zod Edge Validation Schema", () => {
       const { createCalendarEventSchema } = await import("../src/index.ts");
 
       const payload = {
-        bearerToken: "env-token",
         title: "Test Event",
         startDate: "2026-06-07T12:00:00Z",
         endDate: "2026-06-07T13:00:00Z",
@@ -272,42 +270,6 @@ describe("Zod Edge Validation Schema", () => {
     } finally {
       process.env.APP_ID = originalId;
       process.env.APP_PASS = originalPass;
-      process.env.BEARER_TOKEN = originalToken;
-    }
-  });
-
-  test("should fail validation if bearer token is incorrect or missing", async () => {
-    const originalToken = process.env.BEARER_TOKEN;
-    try {
-      process.env.BEARER_TOKEN = "env-token";
-
-      const { createCalendarEventSchema } = await import("../src/index.ts");
-
-      // Case 1: missing token
-      const payload1 = {
-        title: "Test Event",
-        startDate: "2026-06-07T12:00:00Z",
-        endDate: "2026-06-07T13:00:00Z",
-        calendarPath: "calendars/personal",
-        appleId: "test@icloud.com",
-        appSpecificPassword: "abcd-efgh-ijkl-mnop"
-      };
-      const result1 = createCalendarEventSchema.safeParse(payload1);
-      expect(result1.success).toBe(false);
-
-      // Case 2: wrong token
-      const payload2 = {
-        bearerToken: "wrong-token",
-        title: "Test Event",
-        startDate: "2026-06-07T12:00:00Z",
-        endDate: "2026-06-07T13:00:00Z",
-        calendarPath: "calendars/personal",
-        appleId: "test@icloud.com",
-        appSpecificPassword: "abcd-efgh-ijkl-mnop"
-      };
-      const result2 = createCalendarEventSchema.safeParse(payload2);
-      expect(result2.success).toBe(false);
-    } finally {
       process.env.BEARER_TOKEN = originalToken;
     }
   });
