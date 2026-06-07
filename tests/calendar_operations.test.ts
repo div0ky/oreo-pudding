@@ -18,6 +18,7 @@ import type { ICalDavRepository } from "../src/domain/calendar/ICalDavRepository
 import { CalDavRepository } from "../src/infrastructure/calendar/repository/CalDavRepository";
 import { RetrieveAllCalendarEventsQuery } from "../src/application/calendar/queries/RetrieveAllCalendarEventsQuery";
 import { RetrieveAllCalendarEventsQueryHandler } from "../src/application/calendar/queries/RetrieveAllCalendarEventsQueryHandler";
+import { formatInTimeZone } from "../src/application/utils/TimeZoneHelper";
 
 
 describe("Domain Layer: Extended Event Details & Mutable Updates", () => {
@@ -124,8 +125,8 @@ describe("Infrastructure Layer: Serialization & Deserialization", () => {
       "END:VCALENDAR\r\n";
 
     const event = strategy.deserialize(payload);
-    expect(event.dateRange.startDate.toISOString()).toContain("2026-06-07T00:00:00");
-    expect(event.dateRange.endDate.toISOString()).toContain("2026-06-08T00:00:00");
+    expect(formatInTimeZone(event.dateRange.startDate, "America/Chicago")).toBe("2026-06-07T00:00:00.000-05:00");
+    expect(formatInTimeZone(event.dateRange.endDate, "America/Chicago")).toBe("2026-06-08T00:00:00.000-05:00");
   });
 
   test("should not overwrite event dates with timezone block dates in deserialize", () => {
@@ -147,8 +148,25 @@ describe("Infrastructure Layer: Serialization & Deserialization", () => {
       "END:VCALENDAR\r\n";
 
     const event = strategy.deserialize(payload);
-    expect(event.dateRange.startDate.toISOString()).toContain("2026-06-08T08:45:00");
-    expect(event.dateRange.endDate.toISOString()).toContain("2026-06-08T09:45:00");
+    expect(formatInTimeZone(event.dateRange.startDate, "America/Chicago")).toBe("2026-06-08T08:45:00.000-05:00");
+    expect(formatInTimeZone(event.dateRange.endDate, "America/Chicago")).toBe("2026-06-08T09:45:00.000-05:00");
+  });
+
+  test("should parse local/floating times without Z or TZID using the default America/Chicago timezone context", () => {
+    const payload = 
+      "BEGIN:VCALENDAR\r\n" +
+      "VERSION:2.0\r\n" +
+      "BEGIN:VEVENT\r\n" +
+      "UID:event-local-floating-no-tzid\r\n" +
+      "DTSTART:20260608T084500\r\n" +
+      "DTEND:20260608T094500\r\n" +
+      "SUMMARY:Local Floating Meeting\r\n" +
+      "END:VEVENT\r\n" +
+      "END:VCALENDAR\r\n";
+
+    const event = strategy.deserialize(payload);
+    expect(formatInTimeZone(event.dateRange.startDate, "America/Chicago")).toBe("2026-06-08T08:45:00.000-05:00");
+    expect(formatInTimeZone(event.dateRange.endDate, "America/Chicago")).toBe("2026-06-08T09:45:00.000-05:00");
   });
 });
 

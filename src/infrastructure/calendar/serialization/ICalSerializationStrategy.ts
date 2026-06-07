@@ -3,6 +3,7 @@ import { EventId } from "../../../domain/calendar/value-objects/EventId";
 import { DateRange } from "../../../domain/calendar/value-objects/DateRange";
 import { EventDetails } from "../../../domain/calendar/value-objects/EventDetails";
 import type { CalDavSerializationStrategy } from "./CalDavSerializationStrategy";
+import { parseInTimeZone, isValidTimeZone } from "../../../application/utils/TimeZoneHelper";
 
 export class ICalSerializationStrategy implements CalDavSerializationStrategy {
   /**
@@ -68,7 +69,9 @@ export class ICalSerializationStrategy implements CalDavSerializationStrategy {
 
     let uid = "";
     let dtstartStr = "";
+    let dtstartTzid: string | undefined = undefined;
     let dtendStr = "";
+    let dtendTzid: string | undefined = undefined;
     let summary = "";
     let description = "";
     let location = "";
@@ -83,7 +86,7 @@ export class ICalSerializationStrategy implements CalDavSerializationStrategy {
         .replace(/\\\\/g, "\\");
     };
 
-    const parseICalDate = (val: string): Date => {
+    const parseICalDate = (val: string, tzid?: string): Date => {
       const clean = val.trim();
       // 1. UTC format: YYYYMMDDTHHMMSSZ
       if (clean.length === 16 && clean.endsWith("Z")) {
@@ -106,14 +109,20 @@ export class ICalSerializationStrategy implements CalDavSerializationStrategy {
         const h = timePart.substring(0, 2);
         const min = timePart.substring(2, 4);
         const s = timePart.substring(4, 6);
-        return new Date(`${y}-${m}-${d}T${h}:${min}:${s}`);
+        
+        const dateStr = `${y}-${m}-${d}T${h}:${min}:${s}`;
+        const targetTz = tzid && isValidTimeZone(tzid) ? tzid : "America/Chicago";
+        return parseInTimeZone(dateStr, targetTz);
       }
       // 3. Date only format: YYYYMMDD
       if (clean.length === 8) {
         const y = clean.substring(0, 4);
         const m = clean.substring(4, 6);
         const d = clean.substring(6, 8);
-        return new Date(`${y}-${m}-${d}T00:00:00`);
+        
+        const dateStr = `${y}-${m}-${d}T00:00:00`;
+        const targetTz = tzid && isValidTimeZone(tzid) ? tzid : "America/Chicago";
+        return parseInTimeZone(dateStr, targetTz);
       }
       return new Date(clean);
     };
@@ -142,7 +151,19 @@ export class ICalSerializationStrategy implements CalDavSerializationStrategy {
       const right = line.substring(colonIndex + 1);
 
       // Extract parameter-free property name
-      const name = left.split(";")[0].trim().toUpperCase();
+      const leftParts = left.split(";");
+      const name = leftParts[0].trim().toUpperCase();
+
+      let tzid: string | undefined = undefined;
+      for (let i = 1; i < leftParts.length; i++) {
+        const param = leftParts[i].trim();
+        if (param.toUpperCase().startsWith("TZID=")) {
+          tzid = param.substring(5);
+          if (tzid.startsWith('"') && tzid.endsWith('"')) {
+            tzid = tzid.substring(1, tzid.length - 1);
+          }
+        }
+      }
 
       switch (name) {
         case "UID":
@@ -150,9 +171,11 @@ export class ICalSerializationStrategy implements CalDavSerializationStrategy {
           break;
         case "DTSTART":
           dtstartStr = right.trim();
+          dtstartTzid = tzid;
           break;
         case "DTEND":
           dtendStr = right.trim();
+          dtendTzid = tzid;
           break;
         case "SUMMARY":
           summary = unescapeText(right);
@@ -178,8 +201,8 @@ export class ICalSerializationStrategy implements CalDavSerializationStrategy {
       throw new Error("Invalid ICS: DTSTART or DTEND is missing.");
     }
 
-    const startDate = parseICalDate(dtstartStr);
-    const endDate = parseICalDate(dtendStr);
+    const startDate = parseICalDate(dtstartStr, dtstartTzid);
+    const endDate = parseICalDate(dtendStr, dtendTzid);
 
     return CalendarEvent.restore(
       new EventId(uid),
