@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe, beforeEach, afterEach } from "bun:test";
 import { DateRange } from "../src/domain/calendar/value-objects/DateRange";
 import { EventDetails } from "../src/domain/calendar/value-objects/EventDetails";
 import { EventId } from "../src/domain/calendar/value-objects/EventId";
@@ -16,6 +16,8 @@ import { UpdateCalendarEventCommand } from "../src/application/calendar/commands
 import { UpdateCalendarEventCommandHandler } from "../src/application/calendar/commands/UpdateCalendarEventCommandHandler";
 import type { ICalDavRepository } from "../src/domain/calendar/ICalDavRepository";
 import { CalDavRepository } from "../src/infrastructure/calendar/repository/CalDavRepository";
+import { RetrieveAllCalendarEventsQuery } from "../src/application/calendar/queries/RetrieveAllCalendarEventsQuery";
+import { RetrieveAllCalendarEventsQueryHandler } from "../src/application/calendar/queries/RetrieveAllCalendarEventsQueryHandler";
 
 
 describe("Domain Layer: Extended Event Details & Mutable Updates", () => {
@@ -461,7 +463,6 @@ describe("CalDavRepository SWR Caching", () => {
     const listResult = await listHandler.handle(new ListCalendarsQuery("test@icloud.com", "abcd-efgh-ijkl-mnop"));
     expect((listResult as any)._swr).toBeDefined();
     expect((listResult as any)._swr.isStale).toBe(false);
-
     const retrieveHandler = new RetrieveCalendarEventsQueryHandler(repo);
     const retrieveResult = await retrieveHandler.handle(
       new RetrieveCalendarEventsQuery("test@icloud.com", "abcd-efgh-ijkl-mnop", "calendars/home")
@@ -470,3 +471,158 @@ describe("CalDavRepository SWR Caching", () => {
   });
 });
 
+describe("RetrieveAllCalendarEventsQueryHandler", () => {
+  const originalAppId = process.env.APP_ID;
+  const originalAppPass = process.env.APP_PASS;
+
+  beforeEach(() => {
+    process.env.APP_ID = "test@icloud.com";
+    process.env.APP_PASS = "abcd-efgh-ijkl-mnop";
+  });
+
+  afterEach(() => {
+    process.env.APP_ID = originalAppId;
+    process.env.APP_PASS = originalAppPass;
+  });
+
+  test("should retrieve events from all discovered calendars and map them", async () => {
+    const range = new DateRange(new Date("2026-06-07T12:00:00Z"), new Date("2026-06-07T13:00:00Z"));
+    const event1 = CalendarEvent.create(range, new EventDetails("Work Event"));
+    const event2 = CalendarEvent.create(range, new EventDetails("Personal Event"));
+
+    const mockRepo: ICalDavRepository = {
+      async save() {},
+      async findById() { return null; },
+      async find(credentials, calendarPath) {
+        if (calendarPath.value === "calendars/work") {
+          return [event1];
+        }
+        if (calendarPath.value === "calendars/personal") {
+          return [event2];
+        }
+        return [];
+      },
+      async discoverCalendars() {
+        return [
+          { name: "Work", path: "calendars/work" },
+          { name: "Personal", path: "calendars/personal" }
+        ];
+      },
+      getDefaultCalendar(calendars) {
+        return calendars[0];
+      }
+    };
+
+    const query = new RetrieveAllCalendarEventsQuery();
+    const handler = new RetrieveAllCalendarEventsQueryHandler(mockRepo);
+    const result = await handler.handle(query);
+
+    expect(result.length).toBe(2);
+    
+    const workCal = result.find(c => c.calendarName === "Work");
+    expect(workCal).toBeDefined();
+    expect(workCal!.events.length).toBe(1);
+    expect(workCal!.events[0].title).toBe("Work Event");
+    expect(workCal!.calendarPath).toBe("calendars/work");
+
+    const personalCal = result.find(c => c.calendarName === "Personal");
+    expect(personalCal).toBeDefined();
+    expect(personalCal!.events.length).toBe(1);
+    expect(personalCal!.events[0].title).toBe("Personal Event");
+  });
+
+  test("should omit specified calendars", async () => {
+    const mockRepo: ICalDavRepository = {
+      async save() {},
+      async findById() { return null; },
+      async find() { return []; },
+      async discoverCalendars() {
+        return [
+          { name: "Work", path: "calendars/work" },
+          { name: "Personal", path: "calendars/personal" },
+          { name: "Holidays", path: "calendars/holidays" }
+        ];
+      },
+      getDefaultCalendar(calendars) {
+        return calendars[0];
+      }
+    };
+
+    // Omit Work (exact case-insensitive name match) and calendars/holidays (exact path match)
+    const query = new RetrieveAllCalendarEventsQuery(undefined, undefined, ["work", "calendars/holidays"]);
+    const handler = new RetrieveAllCalendarEventsQueryHandler(mockRepo);
+    const result = await handler.handle(query);
+
+    expect(result.length).toBe(1);
+    expect(result[0].calendarName).toBe("Personal");
+  });
+
+  test("should omit calendars using case-insensitive substring matching", async () => {
+    const mockRepo: ICalDavRepository = {
+      async save() {},
+      async findById() { return null; },
+      async find() { return []; },
+      async discoverCalendars() {
+        return [
+          { name: "US Holidays", path: "calendars/us-holidays" },
+          { name: "UK Holidays", path: "calendars/uk-holidays" },
+          { name: "Main", path: "calendars/main" }
+        ];
+      },
+      getDefaultCalendar(calendars) {
+        return calendars[0];
+      }
+    };
+
+    // Omit "holiday" as substring
+    const query = new RetrieveAllCalendarEventsQuery(undefined, undefined, ["holiday"]);
+    const handler = new RetrieveAllCalendarEventsQueryHandler(mockRepo);
+    const result = await handler.handle(query);
+
+    expect(result.length).toBe(1);
+    expect(result[0].calendarName).toBe("Main");
+  });
+
+  test("should aggregate SWR caching headers from discovery and find calls", async () => {
+    const mockCalendars = [{ name: "Main", path: "calendars/main" }];
+    Object.defineProperty(mockCalendars, "_swr", {
+      value: {
+        cachedAt: "2026-06-07T12:00:00.000Z",
+        staleAt: "2026-06-09T12:00:00.000Z",
+        isStale: false
+      },
+      enumerable: false
+    });
+
+    const mockEvents = [];
+    Object.defineProperty(mockEvents, "_swr", {
+      value: {
+        cachedAt: "2026-06-07T12:10:00.000Z",
+        staleAt: "2026-06-07T12:15:00.000Z",
+        isStale: true
+      },
+      enumerable: false
+    });
+
+    const mockRepo: ICalDavRepository = {
+      async save() {},
+      async findById() { return null; },
+      async find() { return mockEvents; },
+      async discoverCalendars() { return mockCalendars; },
+      getDefaultCalendar(calendars) { return calendars[0]; }
+    };
+
+    const query = new RetrieveAllCalendarEventsQuery();
+    const handler = new RetrieveAllCalendarEventsQueryHandler(mockRepo);
+    const result = await handler.handle(query);
+
+    const swr = (result as any)._swr;
+    expect(swr).toBeDefined();
+    // cachedAt should be the min (earliest): 2026-06-07T12:00:00.000Z
+    expect(swr.cachedAt).toBe("2026-06-07T12:00:00.000Z");
+    // staleAt should be the min (earliest): 2026-06-07T12:15:00.000Z
+    expect(swr.staleAt).toBe("2026-06-07T12:15:00.000Z");
+    // isStale should be true since one of them was stale
+    expect(swr.isStale).toBe(true);
+  });
+});

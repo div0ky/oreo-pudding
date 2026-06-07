@@ -15,6 +15,7 @@ Welcome! This codebase enforces strict DDD (Domain-Driven Design), CQRS, and Gan
 3. **No Direct Execution**: The Interface layer must never call repositories or execute business logic directly. It must dispatch a Command or Query through the `Mediator`.
 4. **Thin Handlers**: Command/Query Handlers should only orchestrate. They retrieve aggregate roots from repositories, invoke business methods on those aggregate roots, save them back to repositories, and let the system handle side-effects via Domain Events.
 5. **No Frameworks in Domain**: Never import anything from `@modelcontextprotocol/sdk` or file-system libraries inside the `src/domain/` directory.
+6. **Automatic Single-Account Credentials**: This MCP server only accesses one iCloud account automatically using the credentials loaded from the environment variables `APP_ID` and `APP_PASS`. The external MCP tool definitions and schemas must never require agents/clients to supply credentials in the arguments. Inside the application/infrastructure layers, retrieve credentials automatically from environment variables instead of passing them as query/command inputs.
 
 ---
 

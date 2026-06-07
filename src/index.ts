@@ -19,6 +19,8 @@ import { UpdateCalendarEventCommandHandler } from "./application/calendar/comman
 import { CalDavRepository } from "./infrastructure/calendar/repository/CalDavRepository";
 import { ICalSerializationStrategy } from "./infrastructure/calendar/serialization/ICalSerializationStrategy";
 import { InvalidDateRangeException } from "./domain/calendar/exceptions/InvalidDateRangeException";
+import { RetrieveAllCalendarEventsQuery, type CalendarEventsDto } from "./application/calendar/queries/RetrieveAllCalendarEventsQuery";
+import { RetrieveAllCalendarEventsQueryHandler } from "./application/calendar/queries/RetrieveAllCalendarEventsQueryHandler";
 
 // 1. Initialize CQRS Mediator & Handler Pipeline
 const mediator = new Mediator();
@@ -33,6 +35,8 @@ const updateHandler = new UpdateCalendarEventCommandHandler(repository, serializ
 mediator.registerCommand(CreateCalendarEventCommand, createHandler);
 mediator.registerQuery(RetrieveCalendarEventsQuery, retrieveHandler);
 mediator.registerQuery(ListCalendarsQuery, listCalendarsHandler);
+const retrieveAllHandler = new RetrieveAllCalendarEventsQueryHandler(repository);
+mediator.registerQuery(RetrieveAllCalendarEventsQuery, retrieveAllHandler);
 export function getCredentials(): { appleId: string; appSpecificPassword: string } {
   const appleId = process.env.APP_ID;
   const appSpecificPassword = process.env.APP_PASS;
@@ -78,6 +82,20 @@ export const retrieveCalendarEventsSchema = z.object({
   endDate: z
     .string()
     .datetime({ message: "Invalid end date format. Must be an ISO-8601 datetime string." })
+    .optional()
+});
+
+export const retrieveAllCalendarEventsSchema = z.object({
+  startDate: z
+    .string()
+    .datetime({ message: "Invalid start date format. Must be an ISO-8601 datetime string." })
+    .optional(),
+  endDate: z
+    .string()
+    .datetime({ message: "Invalid end date format. Must be an ISO-8601 datetime string." })
+    .optional(),
+  omit: z
+    .array(z.string())
     .optional()
 });
 
@@ -167,6 +185,29 @@ function setupMcpHandlers(s: Server) {
             endDate: {
               type: "string",
               description: "End date/time in ISO 8601 format (e.g. 2026-06-07T23:59:59Z) [optional]"
+            }
+          },
+          required: []
+        }
+      },
+      {
+        name: "retrieve_all_calendar_events",
+        description: "Retrieves events from all calendars for the authenticated iCloud account within a date range (defaults to current day), with an optional omit list.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            startDate: {
+              type: "string",
+              description: "Start date/time in ISO 8601 format (e.g. 2026-06-07T00:00:00Z) [optional]"
+            },
+            endDate: {
+              type: "string",
+              description: "End date/time in ISO 8601 format (e.g. 2026-06-07T23:59:59Z) [optional]"
+            },
+            omit: {
+              type: "array",
+              items: { type: "string" },
+              description: "List of calendar names or paths to omit/exclude from retrieval [optional]"
             }
           },
           required: []
@@ -365,6 +406,76 @@ s.setRequestHandler(CallToolRequestSchema, async (request) => {
           {
             type: "text",
             text: `Failed to retrieve calendar events: ${error.message || error}`
+          }
+        ],
+        isError: true
+      };
+    }
+  }
+
+  if (toolName === "retrieve_all_calendar_events") {
+    try {
+      const parsed = retrieveAllCalendarEventsSchema.safeParse(request.params.arguments);
+      if (!parsed.success) {
+        const details = parsed.error.issues
+          .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+          .join("; ");
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Validation Error: ${details}`
+            }
+          ],
+          isError: true
+        };
+      }
+
+      const {
+        startDate,
+        endDate,
+        omit
+      } = parsed.data;
+
+      let start: Date;
+      let end: Date;
+
+      if (!startDate && !endDate) {
+        // Default to current 24h day
+        const today = new Date();
+        start = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0);
+        end = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59);
+      } else if (startDate && !endDate) {
+        // Default to 24h day from startDate
+        start = new Date(startDate);
+        end = new Date(start.getTime() + 24 * 60 * 60 * 1000 - 1);
+      } else {
+        start = startDate ? new Date(startDate) : new Date(0);
+        end = endDate ? new Date(endDate) : new Date(Date.now() + 100 * 365 * 24 * 60 * 60 * 1000);
+      }
+
+      const query = new RetrieveAllCalendarEventsQuery(start, end, omit);
+      const calendarsWithEvents = await mediator.query<CalendarEventsDto[]>(query);
+
+      const response = {
+        calendars: calendarsWithEvents,
+        _swr: (calendarsWithEvents as any)._swr
+      };
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(response, null, 2)
+          }
+        ]
+      };
+    } catch (error: any) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Failed to retrieve all calendar events: ${error.message || error}`
           }
         ],
         isError: true
