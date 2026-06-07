@@ -23,7 +23,7 @@ export class CreateCalendarEventCommandHandler
     // 1. Initialize value objects, triggering validation invariants
     const credentials = new AppleCredentials(command.appleId, command.appSpecificPassword);
     const dateRange = new DateRange(command.startDate, command.endDate);
-    const details = new EventDetails(command.title, command.description);
+    const details = new EventDetails(command.title, command.description, command.location, command.url);
     const calendarPath = new CalendarPath(command.calendarPath);
 
     // 2. Aggregate Root Factory creation

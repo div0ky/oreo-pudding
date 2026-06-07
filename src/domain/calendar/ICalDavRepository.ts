@@ -9,4 +9,17 @@ export interface ICalDavRepository {
     credentials: AppleCredentials,
     calendarPath: CalendarPath
   ): Promise<void>;
+
+  findById(
+    eventId: string,
+    credentials: AppleCredentials,
+    calendarPath: CalendarPath
+  ): Promise<CalendarEvent | null>;
+
+  find(
+    credentials: AppleCredentials,
+    calendarPath: CalendarPath,
+    startDate?: Date,
+    endDate?: Date
+  ): Promise<CalendarEvent[]>;
 }

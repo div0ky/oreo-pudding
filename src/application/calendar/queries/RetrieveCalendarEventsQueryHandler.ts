@@ -1,0 +1,33 @@
+import type { IQueryHandler } from "../../seedwork/IQueryHandler";
+import { RetrieveCalendarEventsQuery, type CalendarEventDto } from "./RetrieveCalendarEventsQuery";
+import { AppleCredentials } from "../../../domain/calendar/value-objects/AppleCredentials";
+import { CalendarPath } from "../../../domain/calendar/value-objects/CalendarPath";
+import type { ICalDavRepository } from "../../../domain/calendar/ICalDavRepository";
+
+export class RetrieveCalendarEventsQueryHandler
+  implements IQueryHandler<RetrieveCalendarEventsQuery, CalendarEventDto[]>
+{
+  constructor(private readonly repository: ICalDavRepository) {}
+
+  public async handle(query: RetrieveCalendarEventsQuery): Promise<CalendarEventDto[]> {
+    const credentials = new AppleCredentials(query.appleId, query.appSpecificPassword);
+    const calendarPath = new CalendarPath(query.calendarPath);
+
+    const events = await this.repository.find(
+      credentials,
+      calendarPath,
+      query.startDate,
+      query.endDate
+    );
+
+    return events.map((event) => ({
+      eventId: event.id.value,
+      title: event.details.title,
+      description: event.details.description,
+      location: event.details.location,
+      url: event.details.url,
+      startDate: event.dateRange.startDate.toISOString(),
+      endDate: event.dateRange.endDate.toISOString()
+    }));
+  }
+}

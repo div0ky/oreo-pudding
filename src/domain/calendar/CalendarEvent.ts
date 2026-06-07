@@ -4,12 +4,25 @@ import { DateRange } from "./value-objects/DateRange";
 import { EventDetails } from "./value-objects/EventDetails";
 
 export class CalendarEvent extends AggregateRoot<EventId> {
+  private _dateRange: DateRange;
+  private _details: EventDetails;
+
   private constructor(
     id: EventId,
-    public readonly dateRange: DateRange,
-    public readonly details: EventDetails
+    dateRange: DateRange,
+    details: EventDetails
   ) {
     super(id);
+    this._dateRange = dateRange;
+    this._details = details;
+  }
+
+  public get dateRange(): DateRange {
+    return this._dateRange;
+  }
+
+  public get details(): EventDetails {
+    return this._details;
   }
 
   /**
@@ -24,5 +37,25 @@ export class CalendarEvent extends AggregateRoot<EventId> {
     const uuid = crypto.randomUUID();
     const id = new EventId(uuid);
     return new CalendarEvent(id, dateRange, details);
+  }
+
+  /**
+   * Factory Method Pattern
+   * Reconstitutes an existing event from persistence/infrastructure.
+   */
+  public static restore(
+    id: EventId,
+    dateRange: DateRange,
+    details: EventDetails
+  ): CalendarEvent {
+    return new CalendarEvent(id, dateRange, details);
+  }
+
+  /**
+   * Domain method to update event properties.
+   */
+  public update(dateRange: DateRange, details: EventDetails): void {
+    this._dateRange = dateRange;
+    this._details = details;
   }
 }
