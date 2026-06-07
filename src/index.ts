@@ -1,5 +1,6 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema
@@ -217,7 +218,22 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 });
 
-// 5. Connect and listen on standard I/O streams using Bun's native runtime support
-const transport = new StdioServerTransport();
-await server.connect(transport);
-console.error("Apple Calendar CalDAV MCP Server listening on stdio transport.");
+// 5. Connect and listen using standard I/O streams or SSE transport depending on PORT env variable
+if (process.env.PORT) {
+  const transport = new WebStandardStreamableHTTPServerTransport({
+    sessionIdGenerator: () => crypto.randomUUID(),
+  });
+  await server.connect(transport);
+  const port = parseInt(process.env.PORT, 10);
+  Bun.serve({
+    port,
+    async fetch(req) {
+      return transport.handleRequest(req);
+    }
+  });
+  console.error(`Apple Calendar CalDAV MCP Server listening on SSE transport (port ${port}).`);
+} else {
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+  console.error("Apple Calendar CalDAV MCP Server listening on stdio transport.");
+}

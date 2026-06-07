@@ -1,5 +1,6 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema
@@ -72,8 +73,23 @@ export class McpServerAdapter {
   }
 
   public async start(): Promise<void> {
-    const transport = new StdioServerTransport();
-    await this.server.connect(transport);
-    console.error("Oreo Pudding MCP Server started successfully on stdio transport.");
+    if (process.env.PORT) {
+      const transport = new WebStandardStreamableHTTPServerTransport({
+        sessionIdGenerator: () => crypto.randomUUID(),
+      });
+      await this.server.connect(transport);
+      const port = parseInt(process.env.PORT, 10);
+      Bun.serve({
+        port,
+        async fetch(req) {
+          return transport.handleRequest(req);
+        }
+      });
+      console.error(`Oreo Pudding MCP Server started successfully on SSE transport (port ${port}).`);
+    } else {
+      const transport = new StdioServerTransport();
+      await this.server.connect(transport);
+      console.error("Oreo Pudding MCP Server started successfully on stdio transport.");
+    }
   }
 }

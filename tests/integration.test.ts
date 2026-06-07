@@ -227,3 +227,65 @@ describe("MCP Server JSON-RPC E2E Integration", () => {
     }
   });
 });
+
+describe("MCP Server SSE E2E Integration", () => {
+  test("should start up as HTTP server when PORT is provided and respond to SSE handshake", async () => {
+    // Dynamic free port for testing
+    const testPort = 55667;
+
+    // Spawn server process with PORT env variable
+    const proc = Bun.spawn(["bun", "run", "src/index.ts"], {
+      env: {
+        ...process.env,
+        PORT: String(testPort)
+      },
+      stdout: "pipe",
+      stderr: "pipe"
+    });
+
+    // Wait briefly for the server to spin up and bind to port
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
+    try {
+      const url = `http://localhost:${testPort}/`;
+      
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Accept": "application/json, text/event-stream"
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: {
+            protocolVersion: "2024-11-05",
+            capabilities: {},
+            clientInfo: {
+              name: "test-sse-client",
+              version: "1.0.0"
+            }
+          }
+        })
+      });
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toContain("text/event-stream");
+
+      // Verify we can read the response stream and get the initialize response
+      const reader = response.body?.getReader();
+      expect(reader).toBeDefined();
+
+      const { value } = await reader!.read();
+      const text = new TextDecoder().decode(value);
+      
+      expect(text).toContain("event: message");
+      expect(text).toContain("protocolVersion");
+      expect(text).toContain("result");
+    } finally {
+      proc.kill();
+    }
+  });
+});
+
