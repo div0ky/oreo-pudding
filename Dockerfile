@@ -16,7 +16,7 @@ COPY index.ts ./
 
 # Compile the application into a single standalone, minified binary
 # This eliminates node_modules, source files, and compilation overhead at startup.
-RUN bun build ./index.ts --compile --minify --outfile mcp-server
+RUN bun build ./index.ts --compile --minify --keep-names --outfile mcp-server
 
 # Stage 2: Minimal runtime stage
 FROM alpine:3.20 AS runner

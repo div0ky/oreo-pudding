@@ -38,6 +38,7 @@ const moveHandler = new MoveCalendarEventCommandHandler(repository, serializatio
 
 mediator.registerCommand(CreateCalendarEventCommand, createHandler);
 mediator.registerCommand(MoveCalendarEventCommand, moveHandler);
+mediator.registerCommand(UpdateCalendarEventCommand, updateHandler);
 mediator.registerQuery(RetrieveCalendarEventsQuery, retrieveHandler);
 mediator.registerQuery(ListCalendarsQuery, listCalendarsHandler);
 const retrieveAllHandler = new RetrieveAllCalendarEventsQueryHandler(repository);

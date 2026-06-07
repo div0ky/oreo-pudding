@@ -236,7 +236,24 @@ describe("MCP Server JSON-RPC E2E Integration", () => {
       const idMatch = successText.match(/Domain Event ID: ([a-f0-9-]{36})/);
       expect(idMatch).not.toBeNull();
       const createdEventId = idMatch[1];
-      console.log(`[E2E] Event successfully created through MCP with ID: ${createdEventId}`);
+      // 6b. Call update_calendar_event to verify command handler registry is working
+      console.log(`[E2E] Updating E2E event ${createdEventId}...`);
+      const updateCallResponse = await sendRequest({
+        jsonrpc: "2.0",
+        id: 7,
+        method: "tools/call",
+        params: {
+          name: "update_calendar_event",
+          arguments: {
+            eventId: createdEventId,
+            title: "Updated E2E Test Event via JSON-RPC"
+          }
+        }
+      });
+      expect(updateCallResponse.id).toBe(7);
+      expect(updateCallResponse.result).toBeDefined();
+      expect(updateCallResponse.result.isError).not.toBe(true);
+      expect(updateCallResponse.result.content[0].text).toContain("Event successfully updated with Domain Event ID:");
 
       // 7. Clean up: Delete the created event from the live calendar
       console.log(`[E2E] Cleaning up E2E event ${createdEventId}...`);
