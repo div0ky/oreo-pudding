@@ -576,8 +576,8 @@ s.setRequestHandler(CallToolRequestSchema, async (request) => {
       const command = new UpdateCalendarEventCommand(
         appleId,
         appSpecificPassword,
-        undefined, // calendarPath (always auto-discover)
         eventId,
+        undefined, // calendarPath (always auto-discover)
         title,
         description,
         location,

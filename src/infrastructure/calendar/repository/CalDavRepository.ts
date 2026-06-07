@@ -287,7 +287,9 @@ export class CalDavRepository implements ICalDavRepository {
       const dataMatch = responseBlock.match(/<[^:]*:?calendar-data[^>]*>([\s\S]*?)<\/[^:]*:?calendar-data>/i);
       if (!dataMatch) continue;
 
-      let icsContent = dataMatch[1].trim();
+      const content = dataMatch[1];
+      if (!content) continue;
+      let icsContent = content.trim();
       if (icsContent.startsWith("<![CDATA[")) {
         icsContent = icsContent.substring(9);
       }
@@ -396,7 +398,11 @@ export class CalDavRepository implements ICalDavRepository {
     if (!principalMatch) {
       throw new Error("Could not parse current-user-principal href from XML response.");
     }
-    const principalPath = principalMatch[1].trim();
+    const principalContent = principalMatch[1];
+    if (!principalContent) {
+      throw new Error("Could not parse current-user-principal href from XML response.");
+    }
+    const principalPath = principalContent.trim();
 
     // Step 2: Query calendar-home-set on the principal URL
     const homeSetUrl = principalPath.startsWith("http")
@@ -432,7 +438,11 @@ export class CalDavRepository implements ICalDavRepository {
     if (!homeSetMatch) {
       throw new Error("Could not parse calendar-home-set href from XML response.");
     }
-    const calendarHomeSetPath = homeSetMatch[1].trim();
+    const homeSetContent = homeSetMatch[1];
+    if (!homeSetContent) {
+      throw new Error("Could not parse calendar-home-set href from XML response.");
+    }
+    const calendarHomeSetPath = homeSetContent.trim();
 
     // Step 3: Query displayname and resourcetype on the calendar-home-set URL with Depth: 1
     const listUrl = calendarHomeSetPath.startsWith("http")
@@ -472,19 +482,22 @@ export class CalDavRepository implements ICalDavRepository {
     for (const responseBlock of responseMatches) {
       // Check if it's a calendar collection
       const resourceTypeMatch = responseBlock.match(/<[^:]*:?resourcetype[^>]*>([\s\S]*?)<\/[^:]*:?resourcetype>/i);
-      const isCalendar = resourceTypeMatch && /<[^:]*:?calendar[\s\/>]/i.test(resourceTypeMatch[1]);
+      const resourceTypeVal = resourceTypeMatch?.[1];
+      const isCalendar = resourceTypeVal && /<[^:]*:?calendar[\s\/>]/i.test(resourceTypeVal);
       if (!isCalendar) {
         continue;
       }
 
       const hrefMatch = responseBlock.match(/<[^:]*:?href[^>]*>([\s\S]*?)<\/[^:]*:?href>/i);
-      if (!hrefMatch) {
+      const hrefVal = hrefMatch?.[1];
+      if (!hrefVal) {
         continue;
       }
-      const path = hrefMatch[1].trim();
+      const path = hrefVal.trim();
 
       const displayNameMatch = responseBlock.match(/<[^:]*:?displayname[^>]*>([\s\S]*?)<\/[^:]*:?displayname>/i);
-      const name = displayNameMatch ? displayNameMatch[1].trim() : "Unnamed Calendar";
+      const nameVal = displayNameMatch?.[1];
+      const name = nameVal ? nameVal.trim() : "Unnamed Calendar";
 
       // Also clean up path prefix if it contains host or is relative
       let cleanPath = path;
@@ -527,7 +540,11 @@ export class CalDavRepository implements ICalDavRepository {
     };
 
     const sorted = [...calendars].sort((a, b) => rankCalendar(b.name, b.path) - rankCalendar(a.name, a.path));
-    return sorted[0];
+    const defaultCal = sorted[0];
+    if (!defaultCal) {
+      throw new Error("No calendars available to select a default.");
+    }
+    return defaultCal;
   }
 }
 

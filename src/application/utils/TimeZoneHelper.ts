@@ -23,7 +23,7 @@ export function parseInTimeZone(dateStr: string, timeZone: string = "America/Chi
     return new Date(trimmed);
   }
   
-  const [_, y, m, d, hh = "00", mm = "00", ss = "00", ms = "0"] = match;
+  const [_, y = "", m = "", d = "", hh = "00", mm = "00", ss = "00", ms = "0"] = match;
   
   // Construct UTC date guess:
   const utcGuess = new Date(Date.UTC(

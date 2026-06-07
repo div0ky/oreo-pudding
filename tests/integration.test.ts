@@ -419,7 +419,7 @@ describe("MCP Server SSE E2E Integration", () => {
       });
 
       expect(response.status).toBe(401);
-      const data = await response.json();
+      const data = (await response.json()) as any;
       expect(data.error).toContain("Unauthorized");
     } finally {
       proc.kill();

@@ -1,5 +1,6 @@
 import type { Transport, TransportSendOptions } from "@modelcontextprotocol/sdk/shared/transport.js";
-import { JSONRPCMessage, JSONRPCMessageSchema, MessageExtraInfo } from "@modelcontextprotocol/sdk/types.js";
+import { JSONRPCMessageSchema } from "@modelcontextprotocol/sdk/types.js";
+import type { JSONRPCMessage, MessageExtraInfo } from "@modelcontextprotocol/sdk/types.js";
 
 /**
  * A Web-Standards-compatible SSE Server Transport.

@@ -187,7 +187,9 @@ describe("Application Layer CQRS Command Pipeline", () => {
         return [{ name: "home", path: "user123/calendars/home" }];
       },
       getDefaultCalendar(calendars) {
-        return calendars[0];
+        const first = calendars[0];
+        if (!first) throw new Error("No calendars");
+        return first;
       }
     };
 
@@ -256,7 +258,9 @@ describe("Application Layer CQRS Command Pipeline", () => {
         return [{ name: "home", path: "user123/calendars/home" }];
       },
       getDefaultCalendar(calendars) {
-        return calendars[0];
+        const first = calendars[0];
+        if (!first) throw new Error("No calendars");
+        return first;
       }
     };
 
@@ -325,7 +329,9 @@ describe("Application Layer CQRS Command Pipeline", () => {
         ];
       },
       getDefaultCalendar(calendars) {
-        return calendars[0]; // home
+        const first = calendars[0];
+        if (!first) throw new Error("No calendars");
+        return first;
       }
     };
 
@@ -371,7 +377,9 @@ describe("Application Layer CQRS Command Pipeline", () => {
         ];
       },
       getDefaultCalendar(calendars) {
-        return calendars[0];
+        const first = calendars[0];
+        if (!first) throw new Error("No calendars");
+        return first;
       }
     };
 

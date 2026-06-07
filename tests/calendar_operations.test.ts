@@ -187,7 +187,9 @@ describe("Application Layer: CQRS Pipeline Queries and Commands", () => {
       return [{ name: "home", path: "calendars/home" }];
     },
     getDefaultCalendar(calendars) {
-      return calendars[0];
+      const first = calendars[0];
+      if (!first) throw new Error("No calendars");
+      return first;
     }
   };
 
@@ -209,13 +211,16 @@ describe("Application Layer: CQRS Pipeline Queries and Commands", () => {
     const result = await handler.handle(query);
 
     expect(result.length).toBe(1);
-    expect(result[0].eventId).toBe(event.id.value);
-    expect(result[0].title).toBe("Standup Meeting");
-    expect(result[0].description).toBe("Daily sync");
-    expect(result[0].location).toBe("Room A");
-    expect(result[0].url).toBe("https://zoom.us");
-    expect(result[0].startDate).toBe("2026-06-07T07:00:00.000-05:00");
-    expect(result[0].timezone).toBe("America/Chicago");
+    const item = result[0];
+    expect(item).toBeDefined();
+    if (!item) throw new Error("Expected item to be defined");
+    expect(item.eventId).toBe(event.id.value);
+    expect(item.title).toBe("Standup Meeting");
+    expect(item.description).toBe("Daily sync");
+    expect(item.location).toBe("Room A");
+    expect(item.url).toBe("https://zoom.us");
+    expect(item.startDate).toBe("2026-06-07T07:00:00.000-05:00");
+    expect(item.timezone).toBe("America/Chicago");
   });
 
   test("RetrieveCalendarEventsQueryHandler should return list of mapped DTOs in a custom timezone", async () => {
@@ -239,8 +244,11 @@ describe("Application Layer: CQRS Pipeline Queries and Commands", () => {
     const result = await handler.handle(query);
 
     expect(result.length).toBe(1);
-    expect(result[0].startDate).toBe("2026-06-07T21:00:00.000+09:00");
-    expect(result[0].timezone).toBe("Asia/Tokyo");
+    const item = result[0];
+    expect(item).toBeDefined();
+    if (!item) throw new Error("Expected item to be defined");
+    expect(item.startDate).toBe("2026-06-07T21:00:00.000+09:00");
+    expect(item.timezone).toBe("Asia/Tokyo");
   });
 
   test("UpdateCalendarEventCommandHandler should load, update and save the aggregate", async () => {
@@ -254,8 +262,8 @@ describe("Application Layer: CQRS Pipeline Queries and Commands", () => {
     const command = new UpdateCalendarEventCommand(
       "test@icloud.com",
       "abcd-efgh-ijkl-mnop",
-      "calendars/home",
       event.id.value,
+      "calendars/home",
       "Updated Meeting Title",
       "Updated Description",
       "Room Z",
@@ -292,8 +300,8 @@ describe("Application Layer: CQRS Pipeline Queries and Commands", () => {
     const command = new UpdateCalendarEventCommand(
       "test@icloud.com",
       "abcd-efgh-ijkl-mnop",
-      "calendars/home",
       event.id.value,
+      "calendars/home",
       undefined,
       "Partially Updated Desc"
     );
@@ -317,8 +325,11 @@ describe("Application Layer: CQRS Pipeline Queries and Commands", () => {
     const result = await handler.handle(query);
 
     expect(result.length).toBe(1);
-    expect(result[0].name).toBe("home");
-    expect(result[0].path).toBe("calendars/home");
+    const item = result[0];
+    expect(item).toBeDefined();
+    if (!item) throw new Error("Expected item to be defined");
+    expect(item.name).toBe("home");
+    expect(item.path).toBe("calendars/home");
   });
 
   test("CreateCalendarEventCommandHandler should auto-discover calendar path when omitted", async () => {
@@ -334,7 +345,7 @@ describe("Application Layer: CQRS Pipeline Queries and Commands", () => {
 
     const strategy = new ICalSerializationStrategy();
     
-    let savedPath: string | null = null;
+    let savedPath = "";
     const repoWithDiscoverySpy: ICalDavRepository = {
       ...mockRepo,
       async save(event, payload, credentials, calendarPath) {
@@ -553,7 +564,9 @@ describe("RetrieveAllCalendarEventsQueryHandler", () => {
         ];
       },
       getDefaultCalendar(calendars) {
-        return calendars[0];
+        const first = calendars[0];
+        if (!first) throw new Error("No calendars");
+        return first;
       }
     };
 
@@ -566,13 +579,17 @@ describe("RetrieveAllCalendarEventsQueryHandler", () => {
     const workCal = result.find(c => c.calendarName === "Work");
     expect(workCal).toBeDefined();
     expect(workCal!.events.length).toBe(1);
-    expect(workCal!.events[0].title).toBe("Work Event");
+    const workEvent = workCal!.events[0];
+    expect(workEvent).toBeDefined();
+    expect(workEvent!.title).toBe("Work Event");
     expect(workCal!.calendarPath).toBe("calendars/work");
-
+ 
     const personalCal = result.find(c => c.calendarName === "Personal");
     expect(personalCal).toBeDefined();
     expect(personalCal!.events.length).toBe(1);
-    expect(personalCal!.events[0].title).toBe("Personal Event");
+    const personalEvent = personalCal!.events[0];
+    expect(personalEvent).toBeDefined();
+    expect(personalEvent!.title).toBe("Personal Event");
   });
 
   test("RetrieveAllCalendarEventsQueryHandler should support custom timezone parameter", async () => {
@@ -587,7 +604,9 @@ describe("RetrieveAllCalendarEventsQueryHandler", () => {
         return [{ name: "Work", path: "calendars/work" }];
       },
       getDefaultCalendar(calendars) {
-        return calendars[0];
+        const first = calendars[0];
+        if (!first) throw new Error("No calendars");
+        return first;
       }
     };
 
@@ -596,8 +615,12 @@ describe("RetrieveAllCalendarEventsQueryHandler", () => {
     const result = await handler.handle(query);
 
     expect(result.length).toBe(1);
-    expect(result[0].events[0].startDate).toBe("2026-06-07T21:00:00.000+09:00");
-    expect(result[0].events[0].timezone).toBe("Asia/Tokyo");
+    const firstResult = result[0];
+    expect(firstResult).toBeDefined();
+    const firstEvent = firstResult!.events[0];
+    expect(firstEvent).toBeDefined();
+    expect(firstEvent!.startDate).toBe("2026-06-07T21:00:00.000+09:00");
+    expect(firstEvent!.timezone).toBe("Asia/Tokyo");
   });
 
   test("should omit specified calendars", async () => {
@@ -613,7 +636,9 @@ describe("RetrieveAllCalendarEventsQueryHandler", () => {
         ];
       },
       getDefaultCalendar(calendars) {
-        return calendars[0];
+        const first = calendars[0];
+        if (!first) throw new Error("No calendars");
+        return first;
       }
     };
 
@@ -623,7 +648,9 @@ describe("RetrieveAllCalendarEventsQueryHandler", () => {
     const result = await handler.handle(query);
 
     expect(result.length).toBe(1);
-    expect(result[0].calendarName).toBe("Personal");
+    const firstResult = result[0];
+    expect(firstResult).toBeDefined();
+    expect(firstResult!.calendarName).toBe("Personal");
   });
 
   test("should omit calendars using case-insensitive substring matching", async () => {
@@ -639,7 +666,9 @@ describe("RetrieveAllCalendarEventsQueryHandler", () => {
         ];
       },
       getDefaultCalendar(calendars) {
-        return calendars[0];
+        const first = calendars[0];
+        if (!first) throw new Error("No calendars");
+        return first;
       }
     };
 
@@ -649,7 +678,9 @@ describe("RetrieveAllCalendarEventsQueryHandler", () => {
     const result = await handler.handle(query);
 
     expect(result.length).toBe(1);
-    expect(result[0].calendarName).toBe("Main");
+    const firstResult = result[0];
+    expect(firstResult).toBeDefined();
+    expect(firstResult!.calendarName).toBe("Main");
   });
 
   test("should aggregate SWR caching headers from discovery and find calls", async () => {
@@ -663,7 +694,7 @@ describe("RetrieveAllCalendarEventsQueryHandler", () => {
       enumerable: false
     });
 
-    const mockEvents = [];
+    const mockEvents: CalendarEvent[] = [];
     Object.defineProperty(mockEvents, "_swr", {
       value: {
         cachedAt: "2026-06-07T12:10:00.000Z",
@@ -678,7 +709,11 @@ describe("RetrieveAllCalendarEventsQueryHandler", () => {
       async findById() { return null; },
       async find() { return mockEvents; },
       async discoverCalendars() { return mockCalendars; },
-      getDefaultCalendar(calendars) { return calendars[0]; }
+      getDefaultCalendar(calendars) {
+        const first = calendars[0];
+        if (!first) throw new Error("No calendars");
+        return first;
+      }
     };
 
     const query = new RetrieveAllCalendarEventsQuery();

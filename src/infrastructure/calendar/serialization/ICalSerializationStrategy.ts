@@ -103,6 +103,9 @@ export class ICalSerializationStrategy implements CalDavSerializationStrategy {
         const parts = clean.split("T");
         const datePart = parts[0];
         const timePart = parts[1];
+        if (!datePart || !timePart) {
+          return new Date(clean);
+        }
         const y = datePart.substring(0, 4);
         const m = datePart.substring(4, 6);
         const d = datePart.substring(6, 8);
@@ -152,13 +155,17 @@ export class ICalSerializationStrategy implements CalDavSerializationStrategy {
 
       // Extract parameter-free property name
       const leftParts = left.split(";");
-      const name = leftParts[0].trim().toUpperCase();
+      const firstPart = leftParts[0];
+      if (!firstPart) continue;
+      const name = firstPart.trim().toUpperCase();
 
       let tzid: string | undefined = undefined;
       for (let i = 1; i < leftParts.length; i++) {
-        const param = leftParts[i].trim();
-        if (param.toUpperCase().startsWith("TZID=")) {
-          tzid = param.substring(5);
+        const param = leftParts[i];
+        if (!param) continue;
+        const trimmedParam = param.trim();
+        if (trimmedParam.toUpperCase().startsWith("TZID=")) {
+          tzid = trimmedParam.substring(5);
           if (tzid.startsWith('"') && tzid.endsWith('"')) {
             tzid = tzid.substring(1, tzid.length - 1);
           }
