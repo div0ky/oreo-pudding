@@ -169,4 +169,175 @@ export class CalDavRepository implements ICalDavRepository {
 
     return events;
   }
+
+  /**
+   * Discovers all available calendars for the user.
+   */
+  public async discoverCalendars(
+    credentials: AppleCredentials
+  ): Promise<{ name: string; path: string }[]> {
+    // Step 1: Query current-user-principal on /
+    const principalUrl = "https://caldav.icloud.com/";
+    const principalHeaders = new Headers();
+    principalHeaders.set("Authorization", credentials.toBasicAuthHeader());
+    principalHeaders.set("Depth", "0");
+    principalHeaders.set("Content-Type", "application/xml; charset=utf-8");
+    principalHeaders.set("User-Agent", "Oreo-Pudding-CalDAV/1.0");
+
+    const principalXml = `<?xml version="1.0" encoding="utf-8" ?>
+<d:propfind xmlns:d="DAV:">
+  <d:prop>
+    <d:current-user-principal/>
+  </d:prop>
+</d:propfind>`;
+
+    const principalResponse = await fetch(principalUrl, {
+      method: "PROPFIND",
+      headers: principalHeaders,
+      body: principalXml
+    });
+
+    if (!principalResponse.ok) {
+      const text = await principalResponse.text().catch(() => "");
+      throw new Error(`Failed to find current-user-principal. Status: ${principalResponse.status}. Server response: ${text}`);
+    }
+
+    const principalXmlText = await principalResponse.text();
+    const principalMatch = principalXmlText.match(/<[^:]*:?current-user-principal[\s>][\s\S]*?<[^:]*:?href[^>]*>([\s\S]*?)<\/[^:]*:?href>/i);
+    if (!principalMatch) {
+      throw new Error("Could not parse current-user-principal href from XML response.");
+    }
+    const principalPath = principalMatch[1].trim();
+
+    // Step 2: Query calendar-home-set on the principal URL
+    const homeSetUrl = principalPath.startsWith("http")
+      ? principalPath
+      : `https://caldav.icloud.com${principalPath.startsWith("/") ? principalPath : `/${principalPath}`}`;
+    
+    const homeSetHeaders = new Headers();
+    homeSetHeaders.set("Authorization", credentials.toBasicAuthHeader());
+    homeSetHeaders.set("Depth", "0");
+    homeSetHeaders.set("Content-Type", "application/xml; charset=utf-8");
+    homeSetHeaders.set("User-Agent", "Oreo-Pudding-CalDAV/1.0");
+
+    const homeSetXml = `<?xml version="1.0" encoding="utf-8" ?>
+<d:propfind xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">
+  <d:prop>
+    <c:calendar-home-set />
+  </d:prop>
+</d:propfind>`;
+
+    const homeSetResponse = await fetch(homeSetUrl, {
+      method: "PROPFIND",
+      headers: homeSetHeaders,
+      body: homeSetXml
+    });
+
+    if (!homeSetResponse.ok) {
+      const text = await homeSetResponse.text().catch(() => "");
+      throw new Error(`Failed to retrieve calendar-home-set from principal path '${principalPath}'. Status: ${homeSetResponse.status}. Server response: ${text}`);
+    }
+
+    const homeSetXmlText = await homeSetResponse.text();
+    const homeSetMatch = homeSetXmlText.match(/<[^:]*:?calendar-home-set[\s>][\s\S]*?<[^:]*:?href[^>]*>([\s\S]*?)<\/[^:]*:?href>/i);
+    if (!homeSetMatch) {
+      throw new Error("Could not parse calendar-home-set href from XML response.");
+    }
+    const calendarHomeSetPath = homeSetMatch[1].trim();
+
+    // Step 3: Query displayname and resourcetype on the calendar-home-set URL with Depth: 1
+    const listUrl = calendarHomeSetPath.startsWith("http")
+      ? calendarHomeSetPath
+      : `https://caldav.icloud.com${calendarHomeSetPath.startsWith("/") ? calendarHomeSetPath : `/${calendarHomeSetPath}`}`;
+    
+    const listHeaders = new Headers();
+    listHeaders.set("Authorization", credentials.toBasicAuthHeader());
+    listHeaders.set("Depth", "1");
+    listHeaders.set("Content-Type", "application/xml; charset=utf-8");
+    listHeaders.set("User-Agent", "Oreo-Pudding-CalDAV/1.0");
+
+    const listXml = `<?xml version="1.0" encoding="utf-8" ?>
+<d:propfind xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">
+  <d:prop>
+    <d:displayname />
+    <d:resourcetype />
+  </d:prop>
+</d:propfind>`;
+
+    const listResponse = await fetch(listUrl, {
+      method: "PROPFIND",
+      headers: listHeaders,
+      body: listXml
+    });
+
+    if (!listResponse.ok) {
+      const text = await listResponse.text().catch(() => "");
+      throw new Error(`Failed to list calendars from calendar-home-set path '${calendarHomeSetPath}'. Status: ${listResponse.status}. Server response: ${text}`);
+    }
+
+    const listXmlText = await listResponse.text();
+    const responseMatches = listXmlText.match(/<[^:]*:?response[\s>][\s\S]*?<\/[^:]*:?response>/gi) || [];
+
+    const calendars: { name: string; path: string }[] = [];
+
+    for (const responseBlock of responseMatches) {
+      // Check if it's a calendar collection
+      const resourceTypeMatch = responseBlock.match(/<[^:]*:?resourcetype[^>]*>([\s\S]*?)<\/[^:]*:?resourcetype>/i);
+      const isCalendar = resourceTypeMatch && /<[^:]*:?calendar[\s\/>]/i.test(resourceTypeMatch[1]);
+      if (!isCalendar) {
+        continue;
+      }
+
+      const hrefMatch = responseBlock.match(/<[^:]*:?href[^>]*>([\s\S]*?)<\/[^:]*:?href>/i);
+      if (!hrefMatch) {
+        continue;
+      }
+      const path = hrefMatch[1].trim();
+
+      const displayNameMatch = responseBlock.match(/<[^:]*:?displayname[^>]*>([\s\S]*?)<\/[^:]*:?displayname>/i);
+      const name = displayNameMatch ? displayNameMatch[1].trim() : "Unnamed Calendar";
+
+      // Also clean up path prefix if it contains host or is relative
+      let cleanPath = path;
+      if (cleanPath.startsWith("https://")) {
+        try {
+          const u = new URL(cleanPath);
+          cleanPath = u.pathname;
+        } catch {
+          // ignore
+        }
+      }
+
+      if (cleanPath.endsWith("/")) {
+        cleanPath = cleanPath.slice(0, -1);
+      }
+
+      calendars.push({ name, path: cleanPath });
+    }
+
+    return calendars;
+  }
+
+  /**
+   * Selection heuristic to score and rank discovered calendars to find the best default.
+   */
+  public getDefaultCalendar(
+    calendars: { name: string; path: string }[]
+  ): { name: string; path: string } {
+    const rankCalendar = (name: string, path: string): number => {
+      const n = name.toLowerCase();
+      const p = path.toLowerCase();
+      // Heuristic rankings
+      if (n === "home" || p.includes("/home")) return 100;
+      if (n === "personal" || p.includes("/personal")) return 90;
+      if (n === "default" || p.includes("/default")) return 80;
+      if (n === "ajs" || n.includes("ajs") || p.includes("ajs")) return 70;
+      if (n.includes("calendar") || p.includes("calendar")) return 60;
+      if (n.includes("reminder") || n.includes("todo") || n.includes("task")) return -10;
+      return 0;
+    };
+
+    const sorted = [...calendars].sort((a, b) => rankCalendar(b.name, b.path) - rankCalendar(a.name, a.path));
+    return sorted[0];
+  }
 }

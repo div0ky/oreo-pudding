@@ -8,7 +8,7 @@ export class CreateCalendarEventCommand implements ICommand {
     public readonly description: string,
     public readonly startDate: Date,
     public readonly endDate: Date,
-    public readonly calendarPath: string,
+    public readonly calendarPath?: string,
     public readonly location: string = "",
     public readonly url: string = ""
   ) {}

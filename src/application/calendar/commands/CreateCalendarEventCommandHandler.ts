@@ -20,11 +20,22 @@ export class CreateCalendarEventCommandHandler
    * Orchestrates the creation and CalDAV persistence of a CalendarEvent.
    */
   public async handle(command: CreateCalendarEventCommand): Promise<string> {
-    // 1. Initialize value objects, triggering validation invariants
+    // 1. Initialize credentials & basic details
     const credentials = new AppleCredentials(command.appleId, command.appSpecificPassword);
     const dateRange = new DateRange(command.startDate, command.endDate);
     const details = new EventDetails(command.title, command.description, command.location, command.url);
-    const calendarPath = new CalendarPath(command.calendarPath);
+
+    // 2. Discover default calendar if none provided
+    let pathStr = command.calendarPath;
+    if (!pathStr || pathStr.trim() === "") {
+      const calendars = await this.repository.discoverCalendars(credentials);
+      if (calendars.length === 0) {
+        throw new Error("No calendars found for this iCloud account.");
+      }
+      const defaultCal = this.repository.getDefaultCalendar(calendars);
+      pathStr = defaultCal.path;
+    }
+    const calendarPath = new CalendarPath(pathStr);
 
     // 2. Aggregate Root Factory creation
     const event = CalendarEvent.create(dateRange, details);

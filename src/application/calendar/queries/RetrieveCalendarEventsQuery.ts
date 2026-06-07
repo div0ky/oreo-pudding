@@ -14,7 +14,7 @@ export class RetrieveCalendarEventsQuery implements IQuery<CalendarEventDto[]> {
   constructor(
     public readonly appleId: string,
     public readonly appSpecificPassword: string,
-    public readonly calendarPath: string,
+    public readonly calendarPath?: string,
     public readonly startDate?: Date,
     public readonly endDate?: Date
   ) {}

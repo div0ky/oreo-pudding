@@ -17,7 +17,17 @@ export class UpdateCalendarEventCommandHandler
 
   public async handle(command: UpdateCalendarEventCommand): Promise<string> {
     const credentials = new AppleCredentials(command.appleId, command.appSpecificPassword);
-    const calendarPath = new CalendarPath(command.calendarPath);
+    
+    let pathStr = command.calendarPath;
+    if (!pathStr || pathStr.trim() === "") {
+      const calendars = await this.repository.discoverCalendars(credentials);
+      if (calendars.length === 0) {
+        throw new Error("No calendars found for this iCloud account.");
+      }
+      const defaultCal = this.repository.getDefaultCalendar(calendars);
+      pathStr = defaultCal.path;
+    }
+    const calendarPath = new CalendarPath(pathStr);
 
     // 1. Retrieve the existing event
     const event = await this.repository.findById(command.eventId, credentials, calendarPath);

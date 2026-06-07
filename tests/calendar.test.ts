@@ -174,6 +174,18 @@ describe("Application Layer CQRS Command Pipeline", () => {
         savedPayload = payload;
         savedCredentials = credentials;
         savedPath = calendarPath;
+      },
+      async findById(eventId, credentials, calendarPath) {
+        return null;
+      },
+      async find(credentials, calendarPath, startDate, endDate) {
+        return [];
+      },
+      async discoverCalendars(credentials) {
+        return [{ name: "home", path: "user123/calendars/home" }];
+      },
+      getDefaultCalendar(calendars) {
+        return calendars[0];
       }
     };
 

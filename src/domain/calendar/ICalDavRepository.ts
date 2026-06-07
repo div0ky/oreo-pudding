@@ -22,4 +22,12 @@ export interface ICalDavRepository {
     startDate?: Date,
     endDate?: Date
   ): Promise<CalendarEvent[]>;
+
+  discoverCalendars(
+    credentials: AppleCredentials
+  ): Promise<{ name: string; path: string }[]>;
+
+  getDefaultCalendar(
+    calendars: { name: string; path: string }[]
+  ): { name: string; path: string };
 }

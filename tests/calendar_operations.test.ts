@@ -8,6 +8,10 @@ import { CalendarEvent } from "../src/domain/calendar/CalendarEvent";
 import { ICalSerializationStrategy } from "../src/infrastructure/calendar/serialization/ICalSerializationStrategy";
 import { RetrieveCalendarEventsQuery } from "../src/application/calendar/queries/RetrieveCalendarEventsQuery";
 import { RetrieveCalendarEventsQueryHandler } from "../src/application/calendar/queries/RetrieveCalendarEventsQueryHandler";
+import { ListCalendarsQuery } from "../src/application/calendar/queries/ListCalendarsQuery";
+import { ListCalendarsQueryHandler } from "../src/application/calendar/queries/ListCalendarsQueryHandler";
+import { CreateCalendarEventCommand } from "../src/application/calendar/commands/CreateCalendarEventCommand";
+import { CreateCalendarEventCommandHandler } from "../src/application/calendar/commands/CreateCalendarEventCommandHandler";
 import { UpdateCalendarEventCommand } from "../src/application/calendar/commands/UpdateCalendarEventCommand";
 import { UpdateCalendarEventCommandHandler } from "../src/application/calendar/commands/UpdateCalendarEventCommandHandler";
 import type { ICalDavRepository } from "../src/domain/calendar/ICalDavRepository";
@@ -133,6 +137,12 @@ describe("Application Layer: CQRS Pipeline Queries and Commands", () => {
     },
     async find(credentials, calendarPath, startDate, endDate) {
       return Array.from(eventsStore.values());
+    },
+    async discoverCalendars(credentials) {
+      return [{ name: "home", path: "calendars/home" }];
+    },
+    getDefaultCalendar(calendars) {
+      return calendars[0];
     }
   };
 
@@ -228,5 +238,42 @@ describe("Application Layer: CQRS Pipeline Queries and Commands", () => {
     expect(saved!.details.location).toBe("Original Loc");
     expect(saved!.details.url).toBe("Original Url");
     expect(saved!.dateRange.startDate.toISOString()).toBe("2026-06-07T12:00:00.000Z");
+  });
+
+  test("ListCalendarsQueryHandler should return list of discovered calendars", async () => {
+    const query = new ListCalendarsQuery("test@icloud.com", "abcd-efgh-ijkl-mnop");
+    const handler = new ListCalendarsQueryHandler(mockRepo);
+    const result = await handler.handle(query);
+
+    expect(result.length).toBe(1);
+    expect(result[0].name).toBe("home");
+    expect(result[0].path).toBe("calendars/home");
+  });
+
+  test("CreateCalendarEventCommandHandler should auto-discover calendar path when omitted", async () => {
+    const command = new CreateCalendarEventCommand(
+      "test@icloud.com",
+      "abcd-efgh-ijkl-mnop",
+      "Auto Discovered Path Event",
+      "Checking auto path fallback",
+      new Date("2026-06-07T12:00:00Z"),
+      new Date("2026-06-07T13:00:00Z"),
+      undefined // Omitted calendar path
+    );
+
+    const strategy = new ICalSerializationStrategy();
+    
+    let savedPath: string | null = null;
+    const repoWithDiscoverySpy: ICalDavRepository = {
+      ...mockRepo,
+      async save(event, payload, credentials, calendarPath) {
+        savedPath = calendarPath.value;
+      }
+    };
+
+    const handlerWithSpy = new CreateCalendarEventCommandHandler(repoWithDiscoverySpy, strategy);
+    await handlerWithSpy.handle(command);
+
+    expect(savedPath).toBe("calendars/home");
   });
 });

@@ -143,6 +143,10 @@ describe("MCP Server JSON-RPC E2E Integration", () => {
       expect(createEventTool).toBeDefined();
       expect(createEventTool.description).toContain("Creates an event");
 
+      const listCalendarsTool = tools.find((t: any) => t.name === "list_calendars");
+      expect(listCalendarsTool).toBeDefined();
+      expect(listCalendarsTool.description).toContain("Lists all available calendars");
+
       // 4. Call tool with missing title parameter -> should return Validation Error
       const badCallResponse = await sendRequest({
         jsonrpc: "2.0",
@@ -164,14 +168,36 @@ describe("MCP Server JSON-RPC E2E Integration", () => {
       expect(badCallResponse.result.isError).toBe(true);
       expect(badCallResponse.result.content[0].text).toContain("Validation Error");
 
-      // 5. Call tool with correct credentials and details -> should succeed
+      // 5. Call list_calendars tool
+      const listCalendarsResponse = await sendRequest({
+        jsonrpc: "2.0",
+        id: 4,
+        method: "tools/call",
+        params: {
+          name: "list_calendars",
+          arguments: {
+            appleId,
+            appSpecificPassword
+          }
+        }
+      });
+      console.log("listCalendarsResponse:", JSON.stringify(listCalendarsResponse, null, 2));
+      expect(listCalendarsResponse.id).toBe(4);
+      expect(listCalendarsResponse.result).toBeDefined();
+      expect(listCalendarsResponse.result.isError).not.toBe(true);
+      const calendarList = JSON.parse(listCalendarsResponse.result.content[0].text);
+      expect(Array.isArray(calendarList)).toBe(true);
+      expect(calendarList.length).toBeGreaterThan(0);
+      expect(calendarList[0].path).toBeDefined();
+
+      // 6. Call tool with correct credentials and details -> should succeed
       const now = new Date();
       const startDate = new Date(now.getTime() + 3 * 60 * 60 * 1000).toISOString(); // 3 hours from now
       const endDate = new Date(now.getTime() + 4 * 60 * 60 * 1000).toISOString(); // 4 hours from now
 
       const goodCallResponse = await sendRequest({
         jsonrpc: "2.0",
-        id: 4,
+        id: 5,
         method: "tools/call",
         params: {
           name: "create_calendar_event",
@@ -187,7 +213,7 @@ describe("MCP Server JSON-RPC E2E Integration", () => {
         }
       });
 
-      expect(goodCallResponse.id).toBe(4);
+      expect(goodCallResponse.id).toBe(5);
       expect(goodCallResponse.result).toBeDefined();
       expect(goodCallResponse.result.isError).not.toBe(true);
       
@@ -200,7 +226,7 @@ describe("MCP Server JSON-RPC E2E Integration", () => {
       const createdEventId = idMatch[1];
       console.log(`[E2E] Event successfully created through MCP with ID: ${createdEventId}`);
 
-      // 6. Clean up: Delete the created event from the live calendar
+      // 7. Clean up: Delete the created event from the live calendar
       console.log(`[E2E] Cleaning up E2E event ${createdEventId}...`);
       const credentials = new AppleCredentials(appleId!, appSpecificPassword!);
       const cleanPath = TEST_CALENDAR_PATH.startsWith("/") ? TEST_CALENDAR_PATH : `/${TEST_CALENDAR_PATH}`;
@@ -217,6 +243,60 @@ describe("MCP Server JSON-RPC E2E Integration", () => {
 
       console.log(`[E2E] Clean up response status: ${deleteResponse.status}`);
       expect(deleteResponse.status).toBeLessThan(300);
+
+      // 8. Call create_calendar_event without calendarPath (auto-discovery test)
+      console.log("[E2E] Testing calendar path auto-discovery...");
+      const discoverCallResponse = await sendRequest({
+        jsonrpc: "2.0",
+        id: 6,
+        method: "tools/call",
+        params: {
+          name: "create_calendar_event",
+          arguments: {
+            appleId,
+            appSpecificPassword,
+            title: "E2E Auto-Discovered Calendar Event",
+            description: "Created in E2E integration test block via auto-discovery.",
+            startDate,
+            endDate
+          }
+        }
+      });
+      console.log("discoverCallResponse:", JSON.stringify(discoverCallResponse, null, 2));
+      expect(discoverCallResponse.id).toBe(6);
+      expect(discoverCallResponse.result).toBeDefined();
+      expect(discoverCallResponse.result.isError).not.toBe(true);
+      const discoverSuccessText = discoverCallResponse.result.content[0].text;
+      expect(discoverSuccessText).toContain("Event successfully created with Domain Event ID:");
+
+      const discIdMatch = discoverSuccessText.match(/Domain Event ID: ([a-f0-9-]{36})/);
+      expect(discIdMatch).not.toBeNull();
+      const discEventId = discIdMatch[1];
+      console.log(`[E2E] Auto-discovered event created successfully with ID: ${discEventId}`);
+
+      // Clean up auto-discovered event using the same ranking heuristic
+      const rankCal = (name: string, path: string): number => {
+        const n = name.toLowerCase();
+        const p = path.toLowerCase();
+        if (n === "home" || p.includes("/home")) return 100;
+        if (n === "personal" || p.includes("/personal")) return 90;
+        if (n === "default" || p.includes("/default")) return 80;
+        if (n === "ajs" || n.includes("ajs") || p.includes("ajs")) return 70;
+        if (n.includes("calendar") || p.includes("calendar")) return 60;
+        if (n.includes("reminder") || n.includes("todo") || n.includes("task")) return -10;
+        return 0;
+      };
+      const sortedList = [...calendarList].sort((a, b) => rankCal(b.name, b.path) - rankCal(a.name, a.path));
+      const defaultCalPath = sortedList[0].path;
+
+      const cleanDiscPath = defaultCalPath.startsWith("/") ? defaultCalPath : `/${defaultCalPath}`;
+      const discUrl = `https://caldav.icloud.com${cleanDiscPath}/${discEventId}.ics`;
+      const discDeleteResponse = await fetch(discUrl, {
+        method: "DELETE",
+        headers
+      });
+      console.log(`[E2E] Auto-discovered event clean up response status: ${discDeleteResponse.status}`);
+      expect(discDeleteResponse.status).toBeLessThan(300);
 
     } finally {
       // Force kill the subprocess to ensure no hanging processes

@@ -12,6 +12,8 @@ import { CreateCalendarEventCommand } from "./application/calendar/commands/Crea
 import { CreateCalendarEventCommandHandler } from "./application/calendar/commands/CreateCalendarEventCommandHandler";
 import { RetrieveCalendarEventsQuery, type CalendarEventDto } from "./application/calendar/queries/RetrieveCalendarEventsQuery";
 import { RetrieveCalendarEventsQueryHandler } from "./application/calendar/queries/RetrieveCalendarEventsQueryHandler";
+import { ListCalendarsQuery, type CalendarDto } from "./application/calendar/queries/ListCalendarsQuery";
+import { ListCalendarsQueryHandler } from "./application/calendar/queries/ListCalendarsQueryHandler";
 import { UpdateCalendarEventCommand } from "./application/calendar/commands/UpdateCalendarEventCommand";
 import { UpdateCalendarEventCommandHandler } from "./application/calendar/commands/UpdateCalendarEventCommandHandler";
 import { CalDavRepository } from "./infrastructure/calendar/repository/CalDavRepository";
@@ -25,10 +27,12 @@ const serializationStrategy = new ICalSerializationStrategy();
 
 const createHandler = new CreateCalendarEventCommandHandler(repository, serializationStrategy);
 const retrieveHandler = new RetrieveCalendarEventsQueryHandler(repository);
+const listCalendarsHandler = new ListCalendarsQueryHandler(repository);
 const updateHandler = new UpdateCalendarEventCommandHandler(repository, serializationStrategy);
 
 mediator.registerCommand(CreateCalendarEventCommand, createHandler);
 mediator.registerQuery(RetrieveCalendarEventsQuery, retrieveHandler);
+mediator.registerQuery(ListCalendarsQuery, listCalendarsHandler);
 mediator.registerCommand(UpdateCalendarEventCommand, updateHandler);
 
 // 2. Define Network Edge Validation Schema using Zod
@@ -67,7 +71,7 @@ export const createCalendarEventSchema = z.object({
   endDate: z
     .string()
     .datetime({ message: "Invalid end date format. Must be an ISO-8601 datetime string." }),
-  calendarPath: z.string().min(1, "Calendar path must not be empty.")
+  calendarPath: z.string().optional()
 });
 
 export const retrieveCalendarEventsSchema = z.object({
@@ -95,7 +99,7 @@ export const retrieveCalendarEventsSchema = z.object({
       (val) => /^[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}$/.test(val),
       "Invalid App-Specific Password format. Must be formatted as xxxx-xxxx-xxxx-xxxx."
     ),
-  calendarPath: z.string().min(1, "Calendar path must not be empty."),
+  calendarPath: z.string().optional(),
   startDate: z
     .string()
     .datetime({ message: "Invalid start date format. Must be an ISO-8601 datetime string." })
@@ -131,7 +135,7 @@ export const updateCalendarEventSchema = z.object({
       (val) => /^[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}$/.test(val),
       "Invalid App-Specific Password format. Must be formatted as xxxx-xxxx-xxxx-xxxx."
     ),
-  calendarPath: z.string().min(1, "Calendar path must not be empty."),
+  calendarPath: z.string().optional(),
   eventId: z.string().min(1, "Event ID must not be empty."),
   title: z.string().optional(),
   description: z.string().optional(),
@@ -207,14 +211,13 @@ function setupMcpHandlers(s: Server) {
             calendarPath: {
               type: "string",
               description:
-                "iCloud CalDAV calendar path, typically '<principal-id>/calendars/<calendar-id>' (e.g. '123456789/calendars/home')"
+                "iCloud CalDAV calendar path, typically '<principal-id>/calendars/<calendar-id>' (e.g. '123456789/calendars/home') [optional, defaults to primary/default calendar]"
             }
           },
           required: [
             "title",
             "startDate",
-            "endDate",
-            "calendarPath"
+            "endDate"
           ]
         }
       },
@@ -234,7 +237,7 @@ function setupMcpHandlers(s: Server) {
             },
             calendarPath: {
               type: "string",
-              description: "iCloud CalDAV calendar path (e.g. '123456789/calendars/home')"
+              description: "iCloud CalDAV calendar path (e.g. '123456789/calendars/home') [optional, defaults to primary/default calendar]"
             },
             startDate: {
               type: "string",
@@ -245,7 +248,7 @@ function setupMcpHandlers(s: Server) {
               description: "End date/time in ISO 8601 format (e.g. 2026-06-07T23:59:59Z) [optional]"
             }
           },
-          required: ["calendarPath"]
+          required: []
         }
       },
       {
@@ -264,7 +267,7 @@ function setupMcpHandlers(s: Server) {
             },
             calendarPath: {
               type: "string",
-              description: "iCloud CalDAV calendar path (e.g. '123456789/calendars/home')"
+              description: "iCloud CalDAV calendar path (e.g. '123456789/calendars/home') [optional, defaults to primary/default calendar]"
             },
             eventId: {
               type: "string",
@@ -292,7 +295,25 @@ function setupMcpHandlers(s: Server) {
               description: "Updated end date/time in ISO 8601 format [optional]"
             }
           },
-          required: ["calendarPath", "eventId"]
+          required: ["eventId"]
+        }
+      },
+      {
+        name: "list_calendars",
+        description: "Lists all available calendars for the authenticated iCloud account.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            appleId: {
+              type: "string",
+              description: "Your Apple ID [optional, defaults to APP_ID env var]"
+            },
+            appSpecificPassword: {
+              type: "string",
+              description: "Your iCloud App-Specific Password [optional, defaults to APP_PASS env var]"
+            }
+          },
+          required: []
         }
       }
     ]
@@ -510,6 +531,77 @@ s.setRequestHandler(CallToolRequestSchema, async (request) => {
           {
             type: "text",
             text: `Failed to update calendar event: ${error.message || error}`
+          }
+        ],
+        isError: true
+      };
+    }
+  }
+
+  if (toolName === "list_calendars") {
+    try {
+      const listCalendarsSchema = z.object({
+        appleId: z
+          .string()
+          .optional()
+          .transform((val) => val || process.env.APP_ID)
+          .refine(
+            (val): val is string => !!val && val.trim() !== "",
+            "Apple ID is required (specify it or set APP_ID env variable)."
+          )
+          .refine(
+            (val) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val),
+            "Invalid Apple ID format. Must be a valid email address."
+          ),
+        appSpecificPassword: z
+          .string()
+          .optional()
+          .transform((val) => val || process.env.APP_PASS)
+          .refine(
+            (val): val is string => !!val && val.trim() !== "",
+            "App-Specific Password is required (specify it or set APP_PASS env variable)."
+          )
+          .refine(
+            (val) => /^[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}$/.test(val),
+            "Invalid App-Specific Password format. Must be formatted as xxxx-xxxx-xxxx-xxxx."
+          )
+      });
+
+      const parsed = listCalendarsSchema.safeParse(request.params.arguments);
+      if (!parsed.success) {
+        const details = parsed.error.issues
+          .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+          .join("; ");
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Validation Error: ${details}`
+            }
+          ],
+          isError: true
+        };
+      }
+
+      const { appleId, appSpecificPassword } = parsed.data;
+
+      const query = new ListCalendarsQuery(appleId, appSpecificPassword);
+      const calendars = await mediator.query<CalendarDto[]>(query);
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(calendars, null, 2)
+          }
+        ]
+      };
+    } catch (error: any) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Failed to list calendars: ${error.message || error}`
           }
         ],
         isError: true

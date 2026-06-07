@@ -11,7 +11,17 @@ export class RetrieveCalendarEventsQueryHandler
 
   public async handle(query: RetrieveCalendarEventsQuery): Promise<CalendarEventDto[]> {
     const credentials = new AppleCredentials(query.appleId, query.appSpecificPassword);
-    const calendarPath = new CalendarPath(query.calendarPath);
+    
+    let pathStr = query.calendarPath;
+    if (!pathStr || pathStr.trim() === "") {
+      const calendars = await this.repository.discoverCalendars(credentials);
+      if (calendars.length === 0) {
+        throw new Error("No calendars found for this iCloud account.");
+      }
+      const defaultCal = this.repository.getDefaultCalendar(calendars);
+      pathStr = defaultCal.path;
+    }
+    const calendarPath = new CalendarPath(pathStr);
 
     const events = await this.repository.find(
       credentials,
