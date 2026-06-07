@@ -196,7 +196,33 @@ describe("Application Layer: CQRS Pipeline Queries and Commands", () => {
     expect(result[0].description).toBe("Daily sync");
     expect(result[0].location).toBe("Room A");
     expect(result[0].url).toBe("https://zoom.us");
-    expect(result[0].startDate).toBe("2026-06-07T12:00:00.000Z");
+    expect(result[0].startDate).toBe("2026-06-07T07:00:00.000-05:00");
+    expect(result[0].timezone).toBe("America/Chicago");
+  });
+
+  test("RetrieveCalendarEventsQueryHandler should return list of mapped DTOs in a custom timezone", async () => {
+    eventsStore.clear();
+
+    const range = new DateRange(new Date("2026-06-07T12:00:00Z"), new Date("2026-06-07T13:00:00Z"));
+    const details = new EventDetails("Standup Meeting", "Daily sync", "Room A", "https://zoom.us");
+    const event = CalendarEvent.create(range, details);
+    eventsStore.set(event.id.value, event);
+
+    const query = new RetrieveCalendarEventsQuery(
+      "test@icloud.com",
+      "abcd-efgh-ijkl-mnop",
+      "calendars/home",
+      undefined,
+      undefined,
+      "Asia/Tokyo"
+    );
+
+    const handler = new RetrieveCalendarEventsQueryHandler(mockRepo);
+    const result = await handler.handle(query);
+
+    expect(result.length).toBe(1);
+    expect(result[0].startDate).toBe("2026-06-07T21:00:00.000+09:00");
+    expect(result[0].timezone).toBe("Asia/Tokyo");
   });
 
   test("UpdateCalendarEventCommandHandler should load, update and save the aggregate", async () => {
@@ -529,6 +555,31 @@ describe("RetrieveAllCalendarEventsQueryHandler", () => {
     expect(personalCal).toBeDefined();
     expect(personalCal!.events.length).toBe(1);
     expect(personalCal!.events[0].title).toBe("Personal Event");
+  });
+
+  test("RetrieveAllCalendarEventsQueryHandler should support custom timezone parameter", async () => {
+    const range = new DateRange(new Date("2026-06-07T12:00:00Z"), new Date("2026-06-07T13:00:00Z"));
+    const event = CalendarEvent.create(range, new EventDetails("Work Event"));
+
+    const mockRepo: ICalDavRepository = {
+      async save() {},
+      async findById() { return null; },
+      async find() { return [event]; },
+      async discoverCalendars() {
+        return [{ name: "Work", path: "calendars/work" }];
+      },
+      getDefaultCalendar(calendars) {
+        return calendars[0];
+      }
+    };
+
+    const query = new RetrieveAllCalendarEventsQuery(undefined, undefined, undefined, "Asia/Tokyo");
+    const handler = new RetrieveAllCalendarEventsQueryHandler(mockRepo);
+    const result = await handler.handle(query);
+
+    expect(result.length).toBe(1);
+    expect(result[0].events[0].startDate).toBe("2026-06-07T21:00:00.000+09:00");
+    expect(result[0].events[0].timezone).toBe("Asia/Tokyo");
   });
 
   test("should omit specified calendars", async () => {

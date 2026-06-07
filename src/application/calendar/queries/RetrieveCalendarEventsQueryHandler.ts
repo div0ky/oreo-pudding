@@ -3,6 +3,7 @@ import { RetrieveCalendarEventsQuery, type CalendarEventDto } from "./RetrieveCa
 import { AppleCredentials } from "../../../domain/calendar/value-objects/AppleCredentials";
 import { CalendarPath } from "../../../domain/calendar/value-objects/CalendarPath";
 import type { ICalDavRepository } from "../../../domain/calendar/ICalDavRepository";
+import { formatInTimeZone, isValidTimeZone } from "../../utils/TimeZoneHelper";
 
 export class RetrieveCalendarEventsQueryHandler
   implements IQueryHandler<RetrieveCalendarEventsQuery, CalendarEventDto[]>
@@ -30,14 +31,17 @@ export class RetrieveCalendarEventsQueryHandler
       query.endDate
     );
 
+    const targetTz = query.timezone && isValidTimeZone(query.timezone) ? query.timezone : "America/Chicago";
+
     const result = events.map((event) => ({
       eventId: event.id.value,
       title: event.details.title,
       description: event.details.description,
       location: event.details.location,
       url: event.details.url,
-      startDate: event.dateRange.startDate.toISOString(),
-      endDate: event.dateRange.endDate.toISOString()
+      startDate: formatInTimeZone(event.dateRange.startDate, targetTz),
+      endDate: formatInTimeZone(event.dateRange.endDate, targetTz),
+      timezone: targetTz
     }));
 
     if ("_swr" in events) {

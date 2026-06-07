@@ -23,6 +23,7 @@ import { ICalSerializationStrategy } from "./infrastructure/calendar/serializati
 import { InvalidDateRangeException } from "./domain/calendar/exceptions/InvalidDateRangeException";
 import { RetrieveAllCalendarEventsQuery, type CalendarEventsDto } from "./application/calendar/queries/RetrieveAllCalendarEventsQuery";
 import { RetrieveAllCalendarEventsQueryHandler } from "./application/calendar/queries/RetrieveAllCalendarEventsQueryHandler";
+import { parseInTimeZone, formatInTimeZone, isValidTimeZone } from "./application/utils/TimeZoneHelper";
 
 // 1. Initialize CQRS Mediator & Handler Pipeline
 const mediator = new Mediator();
@@ -65,42 +66,33 @@ export function getCredentials(): { appleId: string; appSpecificPassword: string
 }
 
 // 2. Define Network Edge Validation Schema using Zod
+const isoDateTimeSchema = z.string().refine((val) => {
+  return !isNaN(Date.parse(val));
+}, {
+  message: "Invalid date format. Must be a valid ISO-8601 datetime string."
+});
+
 export const createCalendarEventSchema = z.object({
   title: z.string().min(1, "Title must not be empty."),
   description: z.string().optional().default(""),
   location: z.string().optional().default(""),
   url: z.string().optional().default(""),
-  startDate: z
-    .string()
-    .datetime({ message: "Invalid start date format. Must be an ISO-8601 datetime string." }),
-  endDate: z
-    .string()
-    .datetime({ message: "Invalid end date format. Must be an ISO-8601 datetime string." })
+  startDate: isoDateTimeSchema,
+  endDate: isoDateTimeSchema,
+  timezone: z.string().optional()
 });
 
 export const retrieveCalendarEventsSchema = z.object({
-  startDate: z
-    .string()
-    .datetime({ message: "Invalid start date format. Must be an ISO-8601 datetime string." })
-    .optional(),
-  endDate: z
-    .string()
-    .datetime({ message: "Invalid end date format. Must be an ISO-8601 datetime string." })
-    .optional()
+  startDate: isoDateTimeSchema.optional(),
+  endDate: isoDateTimeSchema.optional(),
+  timezone: z.string().optional()
 });
 
 export const retrieveAllCalendarEventsSchema = z.object({
-  startDate: z
-    .string()
-    .datetime({ message: "Invalid start date format. Must be an ISO-8601 datetime string." })
-    .optional(),
-  endDate: z
-    .string()
-    .datetime({ message: "Invalid end date format. Must be an ISO-8601 datetime string." })
-    .optional(),
-  omit: z
-    .array(z.string())
-    .optional()
+  startDate: isoDateTimeSchema.optional(),
+  endDate: isoDateTimeSchema.optional(),
+  omit: z.array(z.string()).optional(),
+  timezone: z.string().optional()
 });
 
 export const updateCalendarEventSchema = z.object({
@@ -109,26 +101,17 @@ export const updateCalendarEventSchema = z.object({
   description: z.string().optional(),
   location: z.string().optional(),
   url: z.string().optional(),
-  startDate: z
-    .string()
-    .datetime({ message: "Invalid start date format. Must be an ISO-8601 datetime string." })
-    .optional(),
-  endDate: z
-    .string()
-    .datetime({ message: "Invalid end date format. Must be an ISO-8601 datetime string." })
-    .optional()
+  startDate: isoDateTimeSchema.optional(),
+  endDate: isoDateTimeSchema.optional(),
+  timezone: z.string().optional()
 });
 
 export const moveCalendarEventSchema = z.object({
   eventId: z.string().min(1, "Event ID must not be empty."),
-  startDate: z
-    .string()
-    .datetime({ message: "Invalid start date format. Must be an ISO-8601 datetime string." }),
-  endDate: z
-    .string()
-    .datetime({ message: "Invalid end date format. Must be an ISO-8601 datetime string." })
-    .optional(),
-  calendarPath: z.string().optional()
+  startDate: isoDateTimeSchema,
+  endDate: isoDateTimeSchema.optional(),
+  calendarPath: z.string().optional(),
+  timezone: z.string().optional()
 });
 
 // 3. Configure the MCP Server instance factory
@@ -155,7 +138,7 @@ function setupMcpHandlers(s: Server) {
     tools: [
       {
         name: "create_calendar_event",
-        description: "Creates an event in Apple Calendar via CalDAV.",
+        description: "Creates an event in Apple Calendar via CalDAV. Dates/times default to the America/Chicago timezone if no offset is specified.",
         inputSchema: {
           type: "object",
           properties: {
@@ -174,11 +157,15 @@ function setupMcpHandlers(s: Server) {
             },
             startDate: {
               type: "string",
-              description: "Start date/time of the event in ISO 8601 format (e.g. 2026-06-07T15:00:00Z)"
+              description: "Start date/time of the event in ISO 8601 format (e.g. 2026-06-07T15:00:00 or with offset 2026-06-07T15:00:00-05:00)"
             },
             endDate: {
               type: "string",
-              description: "End date/time of the event in ISO 8601 format (e.g. 2026-06-07T16:00:00Z)"
+              description: "End date/time of the event in ISO 8601 format (e.g. 2026-06-07T16:00:00 or with offset 2026-06-07T16:00:00-05:00)"
+            },
+            timezone: {
+              type: "string",
+              description: "Optional IANA timezone (e.g. 'America/Chicago', 'UTC', 'America/New_York'). Defaults to 'America/Chicago'. Used to parse inputs if they lack offsets."
             }
           },
           required: [
@@ -190,17 +177,21 @@ function setupMcpHandlers(s: Server) {
       },
       {
         name: "retrieve_calendar_events",
-        description: "Retrieves events from Apple Calendar via CalDAV within a date range (defaults to current day).",
+        description: "Retrieves events from Apple Calendar via CalDAV within a date range (defaults to current day). Dates/times are returned formatted in the target timezone.",
         inputSchema: {
           type: "object",
           properties: {
             startDate: {
               type: "string",
-              description: "Start date/time in ISO 8601 format (e.g. 2026-06-07T00:00:00Z) [optional]"
+              description: "Start date/time in ISO 8601 format [optional]"
             },
             endDate: {
               type: "string",
-              description: "End date/time in ISO 8601 format (e.g. 2026-06-07T23:59:59Z) [optional]"
+              description: "End date/time in ISO 8601 format [optional]"
+            },
+            timezone: {
+              type: "string",
+              description: "Optional IANA timezone (e.g. 'America/Chicago', 'UTC'). Defaults to 'America/Chicago'. Output dates will be formatted in this timezone, and any local input date/time queries will be parsed in this timezone."
             }
           },
           required: []
@@ -208,22 +199,26 @@ function setupMcpHandlers(s: Server) {
       },
       {
         name: "retrieve_all_calendar_events",
-        description: "Retrieves events from all calendars for the authenticated iCloud account within a date range (defaults to current day), with an optional omit list.",
+        description: "Retrieves events from all calendars for the authenticated iCloud account within a date range (defaults to current day). Dates/times are returned formatted in the target timezone.",
         inputSchema: {
           type: "object",
           properties: {
             startDate: {
               type: "string",
-              description: "Start date/time in ISO 8601 format (e.g. 2026-06-07T00:00:00Z) [optional]"
+              description: "Start date/time in ISO 8601 format [optional]"
             },
             endDate: {
               type: "string",
-              description: "End date/time in ISO 8601 format (e.g. 2026-06-07T23:59:59Z) [optional]"
+              description: "End date/time in ISO 8601 format [optional]"
             },
             omit: {
               type: "array",
               items: { type: "string" },
               description: "List of calendar names or paths to omit/exclude from retrieval [optional]"
+            },
+            timezone: {
+              type: "string",
+              description: "Optional IANA timezone (e.g. 'America/Chicago', 'UTC'). Defaults to 'America/Chicago'. Output dates will be formatted in this timezone, and any local input date/time queries will be parsed in this timezone."
             }
           },
           required: []
@@ -231,7 +226,7 @@ function setupMcpHandlers(s: Server) {
       },
       {
         name: "update_calendar_event",
-        description: "Updates an existing event in Apple Calendar via CalDAV.",
+        description: "Updates an existing event in Apple Calendar via CalDAV. Dates/times default to the America/Chicago timezone if no offset is specified.",
         inputSchema: {
           type: "object",
           properties: {
@@ -259,6 +254,10 @@ function setupMcpHandlers(s: Server) {
             endDate: {
               type: "string",
               description: "Updated end date/time in ISO 8601 format [optional]"
+            },
+            timezone: {
+              type: "string",
+              description: "Optional IANA timezone (e.g. 'America/Chicago', 'UTC'). Defaults to 'America/Chicago'. Used to parse inputs if they lack offsets."
             }
           },
           required: ["eventId"]
@@ -266,7 +265,7 @@ function setupMcpHandlers(s: Server) {
       },
       {
         name: "move_calendar_event",
-        description: "Moves or reschedules an existing event in Apple Calendar via CalDAV by changing its date/time.",
+        description: "Moves or reschedules an existing event in Apple Calendar via CalDAV. Dates/times default to the America/Chicago timezone if no offset is specified.",
         inputSchema: {
           type: "object",
           properties: {
@@ -276,7 +275,7 @@ function setupMcpHandlers(s: Server) {
             },
             startDate: {
               type: "string",
-              description: "New start date/time of the event in ISO 8601 format (e.g. 2026-06-07T15:00:00Z)"
+              description: "New start date/time of the event in ISO 8601 format"
             },
             endDate: {
               type: "string",
@@ -285,6 +284,10 @@ function setupMcpHandlers(s: Server) {
             calendarPath: {
               type: "string",
               description: "The calendar path where the event is located. If omitted, it will be searched/auto-discovered. [optional]"
+            },
+            timezone: {
+              type: "string",
+              description: "Optional IANA timezone (e.g. 'America/Chicago', 'UTC'). Defaults to 'America/Chicago'. Used to parse inputs if they lack offsets."
             }
           },
           required: ["eventId", "startDate"]
@@ -331,16 +334,19 @@ s.setRequestHandler(CallToolRequestSchema, async (request) => {
         location,
         url,
         startDate,
-        endDate
+        endDate,
+        timezone
       } = parsed.data;
+
+      const targetTz = timezone && isValidTimeZone(timezone) ? timezone : "America/Chicago";
 
       const command = new CreateCalendarEventCommand(
         appleId,
         appSpecificPassword,
         title,
         description,
-        new Date(startDate),
-        new Date(endDate),
+        parseInTimeZone(startDate, targetTz),
+        parseInTimeZone(endDate, targetTz),
         undefined, // calendarPath (always auto-discover)
         location,
         url
@@ -399,24 +405,28 @@ s.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { appleId, appSpecificPassword } = getCredentials();
       const {
         startDate,
-        endDate
+        endDate,
+        timezone
       } = parsed.data;
+
+      const targetTz = timezone && isValidTimeZone(timezone) ? timezone : "America/Chicago";
 
       let start: Date;
       let end: Date;
 
       if (!startDate && !endDate) {
-        // Default to current 24h day
-        const today = new Date();
-        start = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0);
-        end = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59);
+        // Default to current 24h day in target timezone
+        const now = new Date();
+        const todayStr = formatInTimeZone(now, targetTz).substring(0, 10);
+        start = parseInTimeZone(`${todayStr}T00:00:00`, targetTz);
+        end = parseInTimeZone(`${todayStr}T23:59:59.999`, targetTz);
       } else if (startDate && !endDate) {
-        // Default to 24h day from startDate
-        start = new Date(startDate);
+        // Default to 24h day from startDate in target timezone
+        start = parseInTimeZone(startDate, targetTz);
         end = new Date(start.getTime() + 24 * 60 * 60 * 1000 - 1);
       } else {
-        start = startDate ? new Date(startDate) : new Date(0);
-        end = endDate ? new Date(endDate) : new Date(Date.now() + 100 * 365 * 24 * 60 * 60 * 1000);
+        start = startDate ? parseInTimeZone(startDate, targetTz) : new Date(0);
+        end = endDate ? parseInTimeZone(endDate, targetTz) : new Date(Date.now() + 100 * 365 * 24 * 60 * 60 * 1000);
       }
 
       const query = new RetrieveCalendarEventsQuery(
@@ -424,7 +434,8 @@ s.setRequestHandler(CallToolRequestSchema, async (request) => {
         appSpecificPassword,
         undefined, // calendarPath (always auto-discover)
         start,
-        end
+        end,
+        targetTz
       );
 
       const events = await mediator.query<CalendarEventDto[]>(query);
@@ -476,27 +487,31 @@ s.setRequestHandler(CallToolRequestSchema, async (request) => {
       const {
         startDate,
         endDate,
-        omit
+        omit,
+        timezone
       } = parsed.data;
+
+      const targetTz = timezone && isValidTimeZone(timezone) ? timezone : "America/Chicago";
 
       let start: Date;
       let end: Date;
 
       if (!startDate && !endDate) {
-        // Default to current 24h day
-        const today = new Date();
-        start = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0);
-        end = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59);
+        // Default to current 24h day in target timezone
+        const now = new Date();
+        const todayStr = formatInTimeZone(now, targetTz).substring(0, 10);
+        start = parseInTimeZone(`${todayStr}T00:00:00`, targetTz);
+        end = parseInTimeZone(`${todayStr}T23:59:59.999`, targetTz);
       } else if (startDate && !endDate) {
-        // Default to 24h day from startDate
-        start = new Date(startDate);
+        // Default to 24h day from startDate in target timezone
+        start = parseInTimeZone(startDate, targetTz);
         end = new Date(start.getTime() + 24 * 60 * 60 * 1000 - 1);
       } else {
-        start = startDate ? new Date(startDate) : new Date(0);
-        end = endDate ? new Date(endDate) : new Date(Date.now() + 100 * 365 * 24 * 60 * 60 * 1000);
+        start = startDate ? parseInTimeZone(startDate, targetTz) : new Date(0);
+        end = endDate ? parseInTimeZone(endDate, targetTz) : new Date(Date.now() + 100 * 365 * 24 * 60 * 60 * 1000);
       }
 
-      const query = new RetrieveAllCalendarEventsQuery(start, end, omit);
+      const query = new RetrieveAllCalendarEventsQuery(start, end, omit, targetTz);
       const calendarsWithEvents = await mediator.query<CalendarEventsDto[]>(query);
 
       const response = {
@@ -551,8 +566,11 @@ s.setRequestHandler(CallToolRequestSchema, async (request) => {
         location,
         url,
         startDate,
-        endDate
+        endDate,
+        timezone
       } = parsed.data;
+
+      const targetTz = timezone && isValidTimeZone(timezone) ? timezone : "America/Chicago";
 
       const command = new UpdateCalendarEventCommand(
         appleId,
@@ -563,8 +581,8 @@ s.setRequestHandler(CallToolRequestSchema, async (request) => {
         description,
         location,
         url,
-        startDate ? new Date(startDate) : undefined,
-        endDate ? new Date(endDate) : undefined
+        startDate ? parseInTimeZone(startDate, targetTz) : undefined,
+        endDate ? parseInTimeZone(endDate, targetTz) : undefined
       );
 
       const updatedEventId = await mediator.send<string>(command);
@@ -612,13 +630,16 @@ s.setRequestHandler(CallToolRequestSchema, async (request) => {
         eventId,
         startDate,
         endDate,
-        calendarPath
+        calendarPath,
+        timezone
       } = parsed.data;
+
+      const targetTz = timezone && isValidTimeZone(timezone) ? timezone : "America/Chicago";
 
       const command = new MoveCalendarEventCommand(
         eventId,
-        new Date(startDate),
-        endDate ? new Date(endDate) : undefined,
+        parseInTimeZone(startDate, targetTz),
+        endDate ? parseInTimeZone(endDate, targetTz) : undefined,
         calendarPath
       );
 

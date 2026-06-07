@@ -11,6 +11,7 @@ export class RetrieveAllCalendarEventsQuery implements IQuery<CalendarEventsDto[
   constructor(
     public readonly startDate?: Date,
     public readonly endDate?: Date,
-    public readonly omit?: string[]
+    public readonly omit?: string[],
+    public readonly timezone?: string
   ) {}
 }

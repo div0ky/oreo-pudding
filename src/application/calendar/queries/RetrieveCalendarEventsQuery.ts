@@ -8,6 +8,7 @@ export interface CalendarEventDto {
   url: string;
   startDate: string;
   endDate: string;
+  timezone: string;
 }
 
 export class RetrieveCalendarEventsQuery implements IQuery<CalendarEventDto[]> {
@@ -16,6 +17,7 @@ export class RetrieveCalendarEventsQuery implements IQuery<CalendarEventDto[]> {
     public readonly appSpecificPassword: string,
     public readonly calendarPath?: string,
     public readonly startDate?: Date,
-    public readonly endDate?: Date
+    public readonly endDate?: Date,
+    public readonly timezone?: string
   ) {}
 }
