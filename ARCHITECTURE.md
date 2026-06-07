@@ -137,7 +137,19 @@ Adapts the `@modelcontextprotocol/sdk` classes (`Server`, `CallToolRequestSchema
 
 ---
 
-## 5. Directory Blueprint
+## 5. In-Memory SWR (Stale-While-Revalidate) Caching
+
+To optimize performance and minimize redundant CalDAV network requests, the Infrastructure layer implements an **In-Memory Stale-While-Revalidate (SWR)** caching mechanism inside `CalDavRepository`.
+
+- **Caching Strategy**: 
+  - Calendar discovery responses are cached with a TTL of 48 hours.
+  - Event query responses and individual event lookups are cached with a TTL of 5 minutes.
+- **Asynchronous Revalidation**: When a request matches a cache entry that is older than the TTL, the repository returns the stale cached data immediately to ensure a fast response time, while spawning an asynchronous background fetch to revalidate and update the cache in memory.
+- **Propagation of Caching Metadata**: Read query handlers propagate `_swr` metadata containing `cachedAt`, `staleAt`, and `isStale` information. The `RetrieveAllCalendarEventsQueryHandler` aggregates the SWR metadata across the individual parallel calendar fetches to present a unified cache age and staleness state.
+
+---
+
+## 6. Directory Blueprint
 
 ```
 src/
