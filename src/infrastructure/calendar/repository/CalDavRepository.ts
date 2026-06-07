@@ -4,12 +4,56 @@ import type { AppleCredentials } from "../../../domain/calendar/value-objects/Ap
 import type { CalendarPath } from "../../../domain/calendar/value-objects/CalendarPath";
 import { ICalSerializationStrategy } from "../serialization/ICalSerializationStrategy";
 
+interface CacheEntry<T> {
+  data: T;
+  fetchedAt: number;
+  revalidating: boolean;
+}
+
 export class CalDavRepository implements ICalDavRepository {
+  private readonly calendarsCache = new Map<string, CacheEntry<{ name: string; path: string }[]>>();
+  private readonly eventsQueryCache = new Map<string, CacheEntry<CalendarEvent[]>>();
+  private readonly eventsByIdCache = new Map<string, CacheEntry<CalendarEvent | null>>();
+
+  private readonly CALENDAR_CACHE_TTL = 48 * 60 * 60 * 1000; // 48 hours
+  private readonly EVENTS_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+  /**
+   * Helper to invalidate all event-related cache keys for a given user & calendar path.
+   */
+  private invalidateEventCaches(appleId: string, path: string): void {
+    const prefix = `${appleId}:${path}`;
+
+    for (const key of this.eventsQueryCache.keys()) {
+      if (key.startsWith(prefix)) {
+        this.eventsQueryCache.delete(key);
+      }
+    }
+
+    for (const key of this.eventsByIdCache.keys()) {
+      if (key.startsWith(prefix)) {
+        this.eventsByIdCache.delete(key);
+      }
+    }
+  }
+
   /**
    * Commits the serialized calendar event to the iCloud CalDAV server.
    * Executes an HTTP PUT against https://caldav.icloud.com/ using Bun's native fetch.
    */
   public async save(
+    event: CalendarEvent,
+    payload: string,
+    credentials: AppleCredentials,
+    calendarPath: CalendarPath
+  ): Promise<void> {
+    // Invalidate events cache to prevent stale reads
+    this.invalidateEventCaches(credentials.appleId, calendarPath.value);
+
+    await this.saveLive(event, payload, credentials, calendarPath);
+  }
+
+  private async saveLive(
     event: CalendarEvent,
     payload: string,
     credentials: AppleCredentials,
@@ -45,6 +89,42 @@ export class CalDavRepository implements ICalDavRepository {
    * Retrieves a single calendar event by its eventId (UID) from the CalDAV server.
    */
   public async findById(
+    eventId: string,
+    credentials: AppleCredentials,
+    calendarPath: CalendarPath
+  ): Promise<CalendarEvent | null> {
+    const key = `${credentials.appleId}:${calendarPath.value}:${eventId}`;
+    const now = Date.now();
+    const cached = this.eventsByIdCache.get(key);
+
+    if (!cached) {
+      const data = await this.findByIdLive(eventId, credentials, calendarPath);
+      this.eventsByIdCache.set(key, { data, fetchedAt: now, revalidating: false });
+      return data;
+    }
+
+    const age = now - cached.fetchedAt;
+    if (age >= this.EVENTS_CACHE_TTL) {
+      if (!cached.revalidating) {
+        cached.revalidating = true;
+        this.findByIdLive(eventId, credentials, calendarPath)
+          .then((freshData) => {
+            cached.data = freshData;
+            cached.fetchedAt = Date.now();
+          })
+          .catch((err) => {
+            console.error("Background findById revalidation failed:", err);
+          })
+          .finally(() => {
+            cached.revalidating = false;
+          });
+      }
+    }
+
+    return cached.data;
+  }
+
+  private async findByIdLive(
     eventId: string,
     credentials: AppleCredentials,
     calendarPath: CalendarPath
@@ -85,6 +165,62 @@ export class CalDavRepository implements ICalDavRepository {
    * within an optional date range.
    */
   public async find(
+    credentials: AppleCredentials,
+    calendarPath: CalendarPath,
+    startDate?: Date,
+    endDate?: Date
+  ): Promise<CalendarEvent[]> {
+    const key = `${credentials.appleId}:${calendarPath.value}:${startDate?.getTime() ?? "none"}:${endDate?.getTime() ?? "none"}`;
+    const now = Date.now();
+    const cached = this.eventsQueryCache.get(key);
+
+    let data: CalendarEvent[];
+    let fetchedAt: number;
+    let isStale = false;
+
+    if (!cached) {
+      data = await this.findLive(credentials, calendarPath, startDate, endDate);
+      fetchedAt = now;
+      this.eventsQueryCache.set(key, { data, fetchedAt: now, revalidating: false });
+    } else {
+      data = cached.data;
+      fetchedAt = cached.fetchedAt;
+      const age = now - fetchedAt;
+      if (age >= this.EVENTS_CACHE_TTL) {
+        isStale = true;
+        if (!cached.revalidating) {
+          cached.revalidating = true;
+          this.findLive(credentials, calendarPath, startDate, endDate)
+            .then((freshData) => {
+              cached.data = freshData;
+              cached.fetchedAt = Date.now();
+            })
+            .catch((err) => {
+              console.error("Background find revalidation failed:", err);
+            })
+            .finally(() => {
+              cached.revalidating = false;
+            });
+        }
+      }
+    }
+
+    const result = [...data];
+    Object.defineProperty(result, "_swr", {
+      value: {
+        cachedAt: new Date(fetchedAt).toISOString(),
+        staleAt: new Date(fetchedAt + this.EVENTS_CACHE_TTL).toISOString(),
+        isStale
+      },
+      enumerable: false,
+      writable: true,
+      configurable: true
+    });
+
+    return result;
+  }
+
+  private async findLive(
     credentials: AppleCredentials,
     calendarPath: CalendarPath,
     startDate?: Date,
@@ -174,6 +310,59 @@ export class CalDavRepository implements ICalDavRepository {
    * Discovers all available calendars for the user.
    */
   public async discoverCalendars(
+    credentials: AppleCredentials
+  ): Promise<{ name: string; path: string }[]> {
+    const key = credentials.appleId;
+    const now = Date.now();
+    const cached = this.calendarsCache.get(key);
+
+    let data: { name: string; path: string }[];
+    let fetchedAt: number;
+    let isStale = false;
+
+    if (!cached) {
+      data = await this.discoverCalendarsLive(credentials);
+      fetchedAt = now;
+      this.calendarsCache.set(key, { data, fetchedAt, revalidating: false });
+    } else {
+      data = cached.data;
+      fetchedAt = cached.fetchedAt;
+      const age = now - fetchedAt;
+      if (age >= this.CALENDAR_CACHE_TTL) {
+        isStale = true;
+        if (!cached.revalidating) {
+          cached.revalidating = true;
+          this.discoverCalendarsLive(credentials)
+            .then((freshData) => {
+              cached.data = freshData;
+              cached.fetchedAt = Date.now();
+            })
+            .catch((err) => {
+              console.error("Background discoverCalendars revalidation failed:", err);
+            })
+            .finally(() => {
+              cached.revalidating = false;
+            });
+        }
+      }
+    }
+
+    const result = [...data];
+    Object.defineProperty(result, "_swr", {
+      value: {
+        cachedAt: new Date(fetchedAt).toISOString(),
+        staleAt: new Date(fetchedAt + this.CALENDAR_CACHE_TTL).toISOString(),
+        isStale
+      },
+      enumerable: false,
+      writable: true,
+      configurable: true
+    });
+
+    return result;
+  }
+
+  private async discoverCalendarsLive(
     credentials: AppleCredentials
   ): Promise<{ name: string; path: string }[]> {
     // Step 1: Query current-user-principal on /
@@ -341,3 +530,4 @@ export class CalDavRepository implements ICalDavRepository {
     return sorted[0];
   }
 }
+

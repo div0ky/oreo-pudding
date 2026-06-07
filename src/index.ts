@@ -346,11 +346,16 @@ s.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       const events = await mediator.query<CalendarEventDto[]>(query);
 
+      const response = {
+        events,
+        _swr: (events as any)._swr
+      };
+
       return {
         content: [
           {
             type: "text",
-            text: JSON.stringify(events, null, 2)
+            text: JSON.stringify(response, null, 2)
           }
         ]
       };
@@ -457,11 +462,16 @@ s.setRequestHandler(CallToolRequestSchema, async (request) => {
       const query = new ListCalendarsQuery(appleId, appSpecificPassword);
       const calendars = await mediator.query<CalendarDto[]>(query);
 
+      const response = {
+        calendars,
+        _swr: (calendars as any)._swr
+      };
+
       return {
         content: [
           {
             type: "text",
-            text: JSON.stringify(calendars, null, 2)
+            text: JSON.stringify(response, null, 2)
           }
         ]
       };
@@ -521,11 +531,16 @@ if (process.env.PORT) {
       const sessionIdHeader = req.headers.get("mcp-session-id");
 
       // Verify Authorization header if BEARER_TOKEN is configured in environment,
-      // exempting public health checks (GET /health or GET / when not requesting SSE/sessions).
-      const isHealthCheck = (req.method === "GET" && (url.pathname === "/health" || url.pathname === "/")) &&
-                            !(accept?.includes("text/event-stream") || sessionIdHeader);
+      // exempting public health checks and dashboard routes (GET /health, GET /, GET /dashboard, GET /dashboard.html)
+      // when not requesting SSE/sessions.
+      const isPublicEndpoint = (req.method === "GET" && (
+        url.pathname === "/health" ||
+        url.pathname === "/" ||
+        url.pathname === "/dashboard" ||
+        url.pathname === "/dashboard.html"
+      )) && !(accept?.includes("text/event-stream") || sessionIdHeader);
 
-      if (!isHealthCheck && process.env.BEARER_TOKEN) {
+      if (!isPublicEndpoint && process.env.BEARER_TOKEN) {
         const authHeader = req.headers.get("Authorization");
         if (!authHeader || !authHeader.startsWith("Bearer ")) {
           return new Response(
@@ -556,6 +571,20 @@ if (process.env.PORT) {
 
       // SSE Connection Endpoint (GET /sse or GET /)
       if (req.method === "GET") {
+        // Serve dashboard HTML if requested
+        if (url.pathname === "/dashboard" || url.pathname === "/dashboard.html") {
+          const htmlFile = Bun.file("dashboard.html");
+          if (await htmlFile.exists()) {
+            return new Response(htmlFile, {
+              status: 200,
+              headers: {
+                "Content-Type": "text/html; charset=utf-8",
+                ...corsHeaders
+              }
+            });
+          }
+        }
+
         if (url.pathname === "/sse") {
           const transport = new WebStandardSSEServerTransport("/messages");
           const sessionServer = createMcpServer();

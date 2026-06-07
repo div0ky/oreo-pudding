@@ -9,9 +9,20 @@ export class ListCalendarsQueryHandler implements IQueryHandler<ListCalendarsQue
   public async handle(query: ListCalendarsQuery): Promise<CalendarDto[]> {
     const credentials = new AppleCredentials(query.appleId, query.appSpecificPassword);
     const calendars = await this.repository.discoverCalendars(credentials);
-    return calendars.map(c => ({
+    const result = calendars.map(c => ({
       name: c.name,
       path: c.path
     }));
+
+    if ("_swr" in calendars) {
+      Object.defineProperty(result, "_swr", {
+        value: (calendars as any)._swr,
+        enumerable: false,
+        writable: true,
+        configurable: true
+      });
+    }
+
+    return result;
   }
 }

@@ -15,6 +15,8 @@ import { CreateCalendarEventCommandHandler } from "../src/application/calendar/c
 import { UpdateCalendarEventCommand } from "../src/application/calendar/commands/UpdateCalendarEventCommand";
 import { UpdateCalendarEventCommandHandler } from "../src/application/calendar/commands/UpdateCalendarEventCommandHandler";
 import type { ICalDavRepository } from "../src/domain/calendar/ICalDavRepository";
+import { CalDavRepository } from "../src/infrastructure/calendar/repository/CalDavRepository";
+
 
 describe("Domain Layer: Extended Event Details & Mutable Updates", () => {
   test("EventDetails should support location and url", () => {
@@ -300,3 +302,171 @@ describe("Application Layer: CQRS Pipeline Queries and Commands", () => {
     expect(savedPath).toBe("calendars/home");
   });
 });
+
+describe("CalDavRepository SWR Caching", () => {
+  const credentials = new AppleCredentials("test@icloud.com", "abcd-efgh-ijkl-mnop");
+  const calendarPath = new CalendarPath("calendars/home");
+
+  test("discoverCalendars should cache results and perform background SWR revalidation when stale", async () => {
+    const repo = new CalDavRepository();
+    let liveCalls = 0;
+    (repo as any).discoverCalendarsLive = async () => {
+      // Simulate network delay to make execution truly asynchronous
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      liveCalls++;
+      return [{ name: "Mock Calendar", path: "mock-path" }];
+    };
+
+    // 1. First call (cache miss)
+    const result1 = await repo.discoverCalendars(credentials);
+    expect(result1).toEqual([{ name: "Mock Calendar", path: "mock-path" }]);
+    expect(liveCalls).toBe(1);
+
+    // 2. Second call (cache hit, fresh)
+    const result2 = await repo.discoverCalendars(credentials);
+    expect(result2).toEqual([{ name: "Mock Calendar", path: "mock-path" }]);
+    expect(liveCalls).toBe(1);
+
+    // 3. Stale the cache (set age to 49 hours)
+    const cacheKey = credentials.appleId;
+    const entry = (repo as any).calendarsCache.get(cacheKey);
+    expect(entry).toBeDefined();
+    entry.fetchedAt = Date.now() - 49 * 60 * 60 * 1000;
+
+    // 4. Third call (stale-while-revalidate)
+    const result3 = await repo.discoverCalendars(credentials);
+    // Returns stale data immediately
+    expect(result3).toEqual([{ name: "Mock Calendar", path: "mock-path" }]);
+    expect(liveCalls).toBe(1); // Increment happens in background
+
+    // Wait for microtask queue to allow the background Promise to run
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(liveCalls).toBe(2);
+  });
+
+  test("find should cache results and perform background SWR revalidation when stale", async () => {
+    const repo = new CalDavRepository();
+    let liveCalls = 0;
+    (repo as any).findLive = async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      liveCalls++;
+      return [];
+    };
+
+    // 1. First call (cache miss)
+    const result1 = await repo.find(credentials, calendarPath);
+    expect(result1).toEqual([]);
+    expect(liveCalls).toBe(1);
+
+    // 2. Second call (cache hit)
+    const result2 = await repo.find(credentials, calendarPath);
+    expect(result2).toEqual([]);
+    expect(liveCalls).toBe(1);
+
+    // 3. Stale the cache (set age to 6 minutes)
+    const cacheKey = `${credentials.appleId}:${calendarPath.value}:none:none`;
+    const entry = (repo as any).eventsQueryCache.get(cacheKey);
+    expect(entry).toBeDefined();
+    entry.fetchedAt = Date.now() - 6 * 60 * 1000;
+
+    // 4. Third call (stale-while-revalidate)
+    const result3 = await repo.find(credentials, calendarPath);
+    expect(result3).toEqual([]);
+    expect(liveCalls).toBe(1);
+
+    // Wait for background revalidation
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(liveCalls).toBe(2);
+  });
+
+  test("findById should cache results and perform background SWR revalidation when stale", async () => {
+    const repo = new CalDavRepository();
+    let liveCalls = 0;
+    (repo as any).findByIdLive = async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      liveCalls++;
+      return null;
+    };
+
+    // 1. First call (cache miss)
+    const result1 = await repo.findById("event-id", credentials, calendarPath);
+    expect(result1).toBeNull();
+    expect(liveCalls).toBe(1);
+
+    // 2. Second call (cache hit)
+    const result2 = await repo.findById("event-id", credentials, calendarPath);
+    expect(result2).toBeNull();
+    expect(liveCalls).toBe(1);
+
+    // 3. Stale the cache (set age to 6 minutes)
+    const cacheKey = `${credentials.appleId}:${calendarPath.value}:event-id`;
+    const entry = (repo as any).eventsByIdCache.get(cacheKey);
+    expect(entry).toBeDefined();
+    entry.fetchedAt = Date.now() - 6 * 60 * 1000;
+
+    // 4. Third call (stale-while-revalidate)
+    const result3 = await repo.findById("event-id", credentials, calendarPath);
+    expect(result3).toBeNull();
+    expect(liveCalls).toBe(1);
+
+    // Wait for background revalidation
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(liveCalls).toBe(2);
+  });
+
+
+  test("save should invalidate event caches matching user and path", async () => {
+    const repo = new CalDavRepository();
+    
+    // Set up mock live implementations
+    (repo as any).findLive = async () => [];
+    (repo as any).findByIdLive = async () => null;
+    (repo as any).saveLive = async () => {};
+
+    // Populates query and byId caches
+    await repo.find(credentials, calendarPath);
+    await repo.findById("event-123", credentials, calendarPath);
+
+    const queryKey = `${credentials.appleId}:${calendarPath.value}:none:none`;
+    const byIdKey = `${credentials.appleId}:${calendarPath.value}:event-123`;
+
+    expect((repo as any).eventsQueryCache.has(queryKey)).toBe(true);
+    expect((repo as any).eventsByIdCache.has(byIdKey)).toBe(true);
+
+    // Call save to trigger invalidation
+    const range = new DateRange(new Date("2026-06-07T12:00:00Z"), new Date("2026-06-07T13:00:00Z"));
+    const details = new EventDetails("Mock Event");
+    const event = CalendarEvent.create(range, details);
+    await repo.save(event, "ics-payload", credentials, calendarPath);
+
+    // Caches should now be empty for that user & path
+    expect((repo as any).eventsQueryCache.has(queryKey)).toBe(false);
+    expect((repo as any).eventsByIdCache.has(byIdKey)).toBe(false);
+  });
+
+  test("should attach and propagate _swr cache metadata in repository and query handlers", async () => {
+    const repo = new CalDavRepository();
+    (repo as any).discoverCalendarsLive = async () => [{ name: "Mock Cal", path: "/mock" }];
+    (repo as any).findLive = async () => [];
+
+    // 1. Test repository returns _swr
+    const calendarsResult = await repo.discoverCalendars(credentials);
+    expect((calendarsResult as any)._swr).toBeDefined();
+    expect((calendarsResult as any)._swr.cachedAt).toBeDefined();
+    expect((calendarsResult as any)._swr.staleAt).toBeDefined();
+    expect((calendarsResult as any)._swr.isStale).toBe(false);
+
+    // 2. Test query handlers propagate _swr
+    const listHandler = new ListCalendarsQueryHandler(repo);
+    const listResult = await listHandler.handle(new ListCalendarsQuery("test@icloud.com", "abcd-efgh-ijkl-mnop"));
+    expect((listResult as any)._swr).toBeDefined();
+    expect((listResult as any)._swr.isStale).toBe(false);
+
+    const retrieveHandler = new RetrieveCalendarEventsQueryHandler(repo);
+    const retrieveResult = await retrieveHandler.handle(
+      new RetrieveCalendarEventsQuery("test@icloud.com", "abcd-efgh-ijkl-mnop", "calendars/home")
+    );
+    expect((retrieveResult as any)._swr).toBeDefined();
+  });
+});
+

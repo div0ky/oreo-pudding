@@ -179,7 +179,13 @@ describe("MCP Server JSON-RPC E2E Integration", () => {
       expect(listCalendarsResponse.id).toBe(4);
       expect(listCalendarsResponse.result).toBeDefined();
       expect(listCalendarsResponse.result.isError).not.toBe(true);
-      const calendarList = JSON.parse(listCalendarsResponse.result.content[0].text);
+      const responseBody = JSON.parse(listCalendarsResponse.result.content[0].text);
+      expect(responseBody._swr).toBeDefined();
+      expect(responseBody._swr.cachedAt).toBeDefined();
+      expect(responseBody._swr.staleAt).toBeDefined();
+      expect(responseBody._swr.isStale).toBeDefined();
+      
+      const calendarList = responseBody.calendars;
       expect(Array.isArray(calendarList)).toBe(true);
       expect(calendarList.length).toBeGreaterThan(0);
       expect(calendarList[0].path).toBeDefined();

@@ -30,7 +30,7 @@ export class RetrieveCalendarEventsQueryHandler
       query.endDate
     );
 
-    return events.map((event) => ({
+    const result = events.map((event) => ({
       eventId: event.id.value,
       title: event.details.title,
       description: event.details.description,
@@ -39,5 +39,16 @@ export class RetrieveCalendarEventsQueryHandler
       startDate: event.dateRange.startDate.toISOString(),
       endDate: event.dateRange.endDate.toISOString()
     }));
+
+    if ("_swr" in events) {
+      Object.defineProperty(result, "_swr", {
+        value: (events as any)._swr,
+        enumerable: false,
+        writable: true,
+        configurable: true
+      });
+    }
+
+    return result;
   }
 }
