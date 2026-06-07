@@ -16,6 +16,8 @@ import { ListCalendarsQuery, type CalendarDto } from "./application/calendar/que
 import { ListCalendarsQueryHandler } from "./application/calendar/queries/ListCalendarsQueryHandler";
 import { UpdateCalendarEventCommand } from "./application/calendar/commands/UpdateCalendarEventCommand";
 import { UpdateCalendarEventCommandHandler } from "./application/calendar/commands/UpdateCalendarEventCommandHandler";
+import { MoveCalendarEventCommand } from "./application/calendar/commands/MoveCalendarEventCommand";
+import { MoveCalendarEventCommandHandler } from "./application/calendar/commands/MoveCalendarEventCommandHandler";
 import { CalDavRepository } from "./infrastructure/calendar/repository/CalDavRepository";
 import { ICalSerializationStrategy } from "./infrastructure/calendar/serialization/ICalSerializationStrategy";
 import { InvalidDateRangeException } from "./domain/calendar/exceptions/InvalidDateRangeException";
@@ -31,8 +33,10 @@ const createHandler = new CreateCalendarEventCommandHandler(repository, serializ
 const retrieveHandler = new RetrieveCalendarEventsQueryHandler(repository);
 const listCalendarsHandler = new ListCalendarsQueryHandler(repository);
 const updateHandler = new UpdateCalendarEventCommandHandler(repository, serializationStrategy);
+const moveHandler = new MoveCalendarEventCommandHandler(repository, serializationStrategy);
 
 mediator.registerCommand(CreateCalendarEventCommand, createHandler);
+mediator.registerCommand(MoveCalendarEventCommand, moveHandler);
 mediator.registerQuery(RetrieveCalendarEventsQuery, retrieveHandler);
 mediator.registerQuery(ListCalendarsQuery, listCalendarsHandler);
 const retrieveAllHandler = new RetrieveAllCalendarEventsQueryHandler(repository);
@@ -113,6 +117,18 @@ export const updateCalendarEventSchema = z.object({
     .string()
     .datetime({ message: "Invalid end date format. Must be an ISO-8601 datetime string." })
     .optional()
+});
+
+export const moveCalendarEventSchema = z.object({
+  eventId: z.string().min(1, "Event ID must not be empty."),
+  startDate: z
+    .string()
+    .datetime({ message: "Invalid start date format. Must be an ISO-8601 datetime string." }),
+  endDate: z
+    .string()
+    .datetime({ message: "Invalid end date format. Must be an ISO-8601 datetime string." })
+    .optional(),
+  calendarPath: z.string().optional()
 });
 
 // 3. Configure the MCP Server instance factory
@@ -246,6 +262,32 @@ function setupMcpHandlers(s: Server) {
             }
           },
           required: ["eventId"]
+        }
+      },
+      {
+        name: "move_calendar_event",
+        description: "Moves or reschedules an existing event in Apple Calendar via CalDAV by changing its date/time.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            eventId: {
+              type: "string",
+              description: "The unique event ID (UID) of the event to move"
+            },
+            startDate: {
+              type: "string",
+              description: "New start date/time of the event in ISO 8601 format (e.g. 2026-06-07T15:00:00Z)"
+            },
+            endDate: {
+              type: "string",
+              description: "Optional new end date/time of the event in ISO 8601 format. If omitted, the event's duration will be preserved. [optional]"
+            },
+            calendarPath: {
+              type: "string",
+              description: "The calendar path where the event is located. If omitted, it will be searched/auto-discovered. [optional]"
+            }
+          },
+          required: ["eventId", "startDate"]
         }
       },
       {
@@ -541,6 +583,61 @@ s.setRequestHandler(CallToolRequestSchema, async (request) => {
           {
             type: "text",
             text: `Failed to update calendar event: ${error.message || error}`
+          }
+        ],
+        isError: true
+      };
+    }
+  }
+
+  if (toolName === "move_calendar_event") {
+    try {
+      const parsed = moveCalendarEventSchema.safeParse(request.params.arguments);
+      if (!parsed.success) {
+        const details = parsed.error.issues
+          .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+          .join("; ");
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Validation Error: ${details}`
+            }
+          ],
+          isError: true
+        };
+      }
+
+      const {
+        eventId,
+        startDate,
+        endDate,
+        calendarPath
+      } = parsed.data;
+
+      const command = new MoveCalendarEventCommand(
+        eventId,
+        new Date(startDate),
+        endDate ? new Date(endDate) : undefined,
+        calendarPath
+      );
+
+      const movedEventId = await mediator.send<string>(command);
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Event successfully moved/rescheduled with Domain Event ID: ${movedEventId}`
+          }
+        ]
+      };
+    } catch (error: any) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Failed to move calendar event: ${error.message || error}`
           }
         ],
         isError: true

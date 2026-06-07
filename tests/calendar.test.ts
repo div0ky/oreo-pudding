@@ -9,6 +9,8 @@ import { InvalidDateRangeException } from "../src/domain/calendar/exceptions/Inv
 import { ICalSerializationStrategy } from "../src/infrastructure/calendar/serialization/ICalSerializationStrategy";
 import { CreateCalendarEventCommand } from "../src/application/calendar/commands/CreateCalendarEventCommand";
 import { CreateCalendarEventCommandHandler } from "../src/application/calendar/commands/CreateCalendarEventCommandHandler";
+import { MoveCalendarEventCommand } from "../src/application/calendar/commands/MoveCalendarEventCommand";
+import { MoveCalendarEventCommandHandler } from "../src/application/calendar/commands/MoveCalendarEventCommandHandler";
 import type { ICalDavRepository } from "../src/domain/calendar/ICalDavRepository";
 
 describe("Domain Layer Value Objects", () => {
@@ -222,6 +224,178 @@ describe("Application Layer CQRS Command Pipeline", () => {
 
     expect(savedPath).toBeDefined();
     expect(savedPath!.value).toBe("user123/calendars/work");
+  });
+
+  test("MoveCalendarEventCommandHandler should reschedule event and preserve duration when newEnd is omitted", async () => {
+    let savedEvent: CalendarEvent | null = null;
+    let savedPayload: string | null = null;
+
+    const existingRange = new DateRange(
+      new Date("2026-06-07T14:00:00Z"),
+      new Date("2026-06-07T15:30:00Z") // 1.5 hours duration
+    );
+    const existingEvent = CalendarEvent.restore(
+      new EventId("existing-event-123"),
+      existingRange,
+      new EventDetails("Old Title")
+    );
+
+    const mockRepo: ICalDavRepository = {
+      async save(event, payload, credentials, calendarPath) {
+        savedEvent = event;
+        savedPayload = payload;
+      },
+      async findById(eventId, credentials, calendarPath) {
+        if (eventId === "existing-event-123") return existingEvent;
+        return null;
+      },
+      async find(credentials, calendarPath, startDate, endDate) {
+        return [];
+      },
+      async discoverCalendars(credentials) {
+        return [{ name: "home", path: "user123/calendars/home" }];
+      },
+      getDefaultCalendar(calendars) {
+        return calendars[0];
+      }
+    };
+
+    const originalId = process.env.APP_ID;
+    const originalPass = process.env.APP_PASS;
+    process.env.APP_ID = "test@icloud.com";
+    process.env.APP_PASS = "abcd-efgh-ijkl-mnop";
+
+    try {
+      const strategy = new ICalSerializationStrategy();
+      const handler = new MoveCalendarEventCommandHandler(mockRepo, strategy);
+
+      const command = new MoveCalendarEventCommand(
+        "existing-event-123",
+        new Date("2026-06-08T10:00:00Z"),
+        undefined,
+        "user123/calendars/home"
+      );
+
+      const eventId = await handler.handle(command);
+
+      expect(eventId).toBe("existing-event-123");
+      expect(savedEvent).toBeDefined();
+      expect(savedEvent!.dateRange.startDate.toISOString()).toBe("2026-06-08T10:00:00.000Z");
+      // Duration preserved: 1.5 hours => 2026-06-08T11:30:00Z
+      expect(savedEvent!.dateRange.endDate.toISOString()).toBe("2026-06-08T11:30:00.000Z");
+    } finally {
+      process.env.APP_ID = originalId;
+      process.env.APP_PASS = originalPass;
+    }
+  });
+
+  test("MoveCalendarEventCommandHandler should search across calendars if calendarPath is omitted", async () => {
+    let savedEvent: CalendarEvent | null = null;
+    let savedPath: CalendarPath | null = null;
+
+    const existingRange = new DateRange(
+      new Date("2026-06-07T14:00:00Z"),
+      new Date("2026-06-07T15:00:00Z")
+    );
+    const existingEvent = CalendarEvent.restore(
+      new EventId("search-event-123"),
+      existingRange,
+      new EventDetails("Target Title")
+    );
+
+    const mockRepo: ICalDavRepository = {
+      async save(event, payload, credentials, calendarPath) {
+        savedEvent = event;
+        savedPath = calendarPath;
+      },
+      async findById(eventId, credentials, calendarPath) {
+        // Only return if it's the second calendar path
+        if (eventId === "search-event-123" && calendarPath.value === "user123/calendars/work") {
+          return existingEvent;
+        }
+        return null;
+      },
+      async find(credentials, calendarPath, startDate, endDate) {
+        return [];
+      },
+      async discoverCalendars(credentials) {
+        return [
+          { name: "home", path: "user123/calendars/home" },
+          { name: "work", path: "user123/calendars/work" }
+        ];
+      },
+      getDefaultCalendar(calendars) {
+        return calendars[0]; // home
+      }
+    };
+
+    const originalId = process.env.APP_ID;
+    const originalPass = process.env.APP_PASS;
+    process.env.APP_ID = "test@icloud.com";
+    process.env.APP_PASS = "abcd-efgh-ijkl-mnop";
+
+    try {
+      const strategy = new ICalSerializationStrategy();
+      const handler = new MoveCalendarEventCommandHandler(mockRepo, strategy);
+
+      const command = new MoveCalendarEventCommand(
+        "search-event-123",
+        new Date("2026-06-08T12:00:00Z")
+      );
+
+      const eventId = await handler.handle(command);
+
+      expect(eventId).toBe("search-event-123");
+      expect(savedPath).toBeDefined();
+      expect(savedPath!.value).toBe("user123/calendars/work");
+      expect(savedEvent!.dateRange.startDate.toISOString()).toBe("2026-06-08T12:00:00.000Z");
+    } finally {
+      process.env.APP_ID = originalId;
+      process.env.APP_PASS = originalPass;
+    }
+  });
+
+  test("MoveCalendarEventCommandHandler should throw error if event not found in any calendar", async () => {
+    const mockRepo: ICalDavRepository = {
+      async save(event, payload, credentials, calendarPath) {},
+      async findById(eventId, credentials, calendarPath) {
+        return null;
+      },
+      async find(credentials, calendarPath, startDate, endDate) {
+        return [];
+      },
+      async discoverCalendars(credentials) {
+        return [
+          { name: "home", path: "user123/calendars/home" },
+          { name: "work", path: "user123/calendars/work" }
+        ];
+      },
+      getDefaultCalendar(calendars) {
+        return calendars[0];
+      }
+    };
+
+    const originalId = process.env.APP_ID;
+    const originalPass = process.env.APP_PASS;
+    process.env.APP_ID = "test@icloud.com";
+    process.env.APP_PASS = "abcd-efgh-ijkl-mnop";
+
+    try {
+      const strategy = new ICalSerializationStrategy();
+      const handler = new MoveCalendarEventCommandHandler(mockRepo, strategy);
+
+      const command = new MoveCalendarEventCommand(
+        "non-existent-event",
+        new Date("2026-06-08T12:00:00Z")
+      );
+
+      expect(handler.handle(command)).rejects.toThrow(
+        "Calendar event with ID 'non-existent-event' not found across any discovered calendars."
+      );
+    } finally {
+      process.env.APP_ID = originalId;
+      process.env.APP_PASS = originalPass;
+    }
   });
 });
 
