@@ -123,6 +123,29 @@ describe("Infrastructure Layer: Serialization & Deserialization", () => {
     expect(event.dateRange.startDate.toISOString()).toContain("2026-06-07T00:00:00");
     expect(event.dateRange.endDate.toISOString()).toContain("2026-06-08T00:00:00");
   });
+
+  test("should not overwrite event dates with timezone block dates in deserialize", () => {
+    const payload = 
+      "BEGIN:VCALENDAR\r\n" +
+      "VERSION:2.0\r\n" +
+      "BEGIN:VEVENT\r\n" +
+      "UID:event-timezone-test\r\n" +
+      "DTSTART;TZID=America/Chicago:20260608T084500\r\n" +
+      "DTEND;TZID=America/Chicago:20260608T094500\r\n" +
+      "SUMMARY:Meeting with timezone\r\n" +
+      "END:VEVENT\r\n" +
+      "BEGIN:VTIMEZONE\r\n" +
+      "TZID:America/Chicago\r\n" +
+      "BEGIN:STANDARD\r\n" +
+      "DTSTART:20071104T020000\r\n" +
+      "END:STANDARD\r\n" +
+      "END:VTIMEZONE\r\n" +
+      "END:VCALENDAR\r\n";
+
+    const event = strategy.deserialize(payload);
+    expect(event.dateRange.startDate.toISOString()).toContain("2026-06-08T08:45:00");
+    expect(event.dateRange.endDate.toISOString()).toContain("2026-06-08T09:45:00");
+  });
 });
 
 describe("Application Layer: CQRS Pipeline Queries and Commands", () => {

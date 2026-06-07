@@ -73,6 +73,7 @@ export class ICalSerializationStrategy implements CalDavSerializationStrategy {
     let description = "";
     let location = "";
     let url = "";
+    let inVevent = false;
 
     const unescapeText = (text: string): string => {
       return text
@@ -119,6 +120,21 @@ export class ICalSerializationStrategy implements CalDavSerializationStrategy {
 
     for (const line of lines) {
       if (!line || line.trim() === "") continue;
+      
+      const trimmedLine = line.trim();
+      const upperLine = trimmedLine.toUpperCase();
+
+      if (upperLine === "BEGIN:VEVENT") {
+        inVevent = true;
+        continue;
+      }
+      if (upperLine === "END:VEVENT") {
+        inVevent = false;
+        continue;
+      }
+
+      if (!inVevent) continue;
+
       const colonIndex = line.indexOf(":");
       if (colonIndex === -1) continue;
 
