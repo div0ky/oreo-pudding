@@ -33,34 +33,31 @@ const updateHandler = new UpdateCalendarEventCommandHandler(repository, serializ
 mediator.registerCommand(CreateCalendarEventCommand, createHandler);
 mediator.registerQuery(RetrieveCalendarEventsQuery, retrieveHandler);
 mediator.registerQuery(ListCalendarsQuery, listCalendarsHandler);
-mediator.registerCommand(UpdateCalendarEventCommand, updateHandler);
+export function getCredentials(): { appleId: string; appSpecificPassword: string } {
+  const appleId = process.env.APP_ID;
+  const appSpecificPassword = process.env.APP_PASS;
+
+  if (!appleId || appleId.trim() === "") {
+    throw new Error("Apple ID is required (set APP_ID env variable).");
+  }
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(appleId)) {
+    throw new Error("Invalid Apple ID format. Must be a valid email address.");
+  }
+
+  if (!appSpecificPassword || appSpecificPassword.trim() === "") {
+    throw new Error("App-Specific Password is required (set APP_PASS env variable).");
+  }
+  const aspRegex = /^[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}$/;
+  if (!aspRegex.test(appSpecificPassword)) {
+    throw new Error("Invalid App-Specific Password format. Must be formatted as xxxx-xxxx-xxxx-xxxx.");
+  }
+
+  return { appleId, appSpecificPassword };
+}
 
 // 2. Define Network Edge Validation Schema using Zod
 export const createCalendarEventSchema = z.object({
-  appleId: z
-    .string()
-    .optional()
-    .transform((val) => val || process.env.APP_ID)
-    .refine(
-      (val): val is string => !!val && val.trim() !== "",
-      "Apple ID is required (specify it or set APP_ID env variable)."
-    )
-    .refine(
-      (val) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val),
-      "Invalid Apple ID format. Must be a valid email address."
-    ),
-  appSpecificPassword: z
-    .string()
-    .optional()
-    .transform((val) => val || process.env.APP_PASS)
-    .refine(
-      (val): val is string => !!val && val.trim() !== "",
-      "App-Specific Password is required (specify it or set APP_PASS env variable)."
-    )
-    .refine(
-      (val) => /^[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}$/.test(val),
-      "Invalid App-Specific Password format. Must be formatted as xxxx-xxxx-xxxx-xxxx."
-    ),
   title: z.string().min(1, "Title must not be empty."),
   description: z.string().optional().default(""),
   location: z.string().optional().default(""),
@@ -70,36 +67,10 @@ export const createCalendarEventSchema = z.object({
     .datetime({ message: "Invalid start date format. Must be an ISO-8601 datetime string." }),
   endDate: z
     .string()
-    .datetime({ message: "Invalid end date format. Must be an ISO-8601 datetime string." }),
-  calendarPath: z.string().optional()
+    .datetime({ message: "Invalid end date format. Must be an ISO-8601 datetime string." })
 });
 
 export const retrieveCalendarEventsSchema = z.object({
-  appleId: z
-    .string()
-    .optional()
-    .transform((val) => val || process.env.APP_ID)
-    .refine(
-      (val): val is string => !!val && val.trim() !== "",
-      "Apple ID is required (specify it or set APP_ID env variable)."
-    )
-    .refine(
-      (val) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val),
-      "Invalid Apple ID format. Must be a valid email address."
-    ),
-  appSpecificPassword: z
-    .string()
-    .optional()
-    .transform((val) => val || process.env.APP_PASS)
-    .refine(
-      (val): val is string => !!val && val.trim() !== "",
-      "App-Specific Password is required (specify it or set APP_PASS env variable)."
-    )
-    .refine(
-      (val) => /^[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}$/.test(val),
-      "Invalid App-Specific Password format. Must be formatted as xxxx-xxxx-xxxx-xxxx."
-    ),
-  calendarPath: z.string().optional(),
   startDate: z
     .string()
     .datetime({ message: "Invalid start date format. Must be an ISO-8601 datetime string." })
@@ -111,31 +82,6 @@ export const retrieveCalendarEventsSchema = z.object({
 });
 
 export const updateCalendarEventSchema = z.object({
-  appleId: z
-    .string()
-    .optional()
-    .transform((val) => val || process.env.APP_ID)
-    .refine(
-      (val): val is string => !!val && val.trim() !== "",
-      "Apple ID is required (specify it or set APP_ID env variable)."
-    )
-    .refine(
-      (val) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val),
-      "Invalid Apple ID format. Must be a valid email address."
-    ),
-  appSpecificPassword: z
-    .string()
-    .optional()
-    .transform((val) => val || process.env.APP_PASS)
-    .refine(
-      (val): val is string => !!val && val.trim() !== "",
-      "App-Specific Password is required (specify it or set APP_PASS env variable)."
-    )
-    .refine(
-      (val) => /^[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}$/.test(val),
-      "Invalid App-Specific Password format. Must be formatted as xxxx-xxxx-xxxx-xxxx."
-    ),
-  calendarPath: z.string().optional(),
   eventId: z.string().min(1, "Event ID must not be empty."),
   title: z.string().optional(),
   description: z.string().optional(),
@@ -179,14 +125,6 @@ function setupMcpHandlers(s: Server) {
         inputSchema: {
           type: "object",
           properties: {
-            appleId: {
-              type: "string",
-              description: "Your Apple ID (email address) [optional, defaults to APP_ID env var]"
-            },
-            appSpecificPassword: {
-              type: "string",
-              description: "Your iCloud App-Specific Password (formatted as xxxx-xxxx-xxxx-xxxx) [optional, defaults to APP_PASS env var]"
-            },
             title: { type: "string", description: "Title of the calendar event" },
             description: {
               type: "string",
@@ -207,11 +145,6 @@ function setupMcpHandlers(s: Server) {
             endDate: {
               type: "string",
               description: "End date/time of the event in ISO 8601 format (e.g. 2026-06-07T16:00:00Z)"
-            },
-            calendarPath: {
-              type: "string",
-              description:
-                "iCloud CalDAV calendar path, typically '<principal-id>/calendars/<calendar-id>' (e.g. '123456789/calendars/home') [optional, defaults to primary/default calendar]"
             }
           },
           required: [
@@ -227,18 +160,6 @@ function setupMcpHandlers(s: Server) {
         inputSchema: {
           type: "object",
           properties: {
-            appleId: {
-              type: "string",
-              description: "Your Apple ID [optional, defaults to APP_ID env var]"
-            },
-            appSpecificPassword: {
-              type: "string",
-              description: "Your iCloud App-Specific Password [optional, defaults to APP_PASS env var]"
-            },
-            calendarPath: {
-              type: "string",
-              description: "iCloud CalDAV calendar path (e.g. '123456789/calendars/home') [optional, defaults to primary/default calendar]"
-            },
             startDate: {
               type: "string",
               description: "Start date/time in ISO 8601 format (e.g. 2026-06-07T00:00:00Z) [optional]"
@@ -257,18 +178,6 @@ function setupMcpHandlers(s: Server) {
         inputSchema: {
           type: "object",
           properties: {
-            appleId: {
-              type: "string",
-              description: "Your Apple ID [optional, defaults to APP_ID env var]"
-            },
-            appSpecificPassword: {
-              type: "string",
-              description: "Your iCloud App-Specific Password [optional, defaults to APP_PASS env var]"
-            },
-            calendarPath: {
-              type: "string",
-              description: "iCloud CalDAV calendar path (e.g. '123456789/calendars/home') [optional, defaults to primary/default calendar]"
-            },
             eventId: {
               type: "string",
               description: "The unique event ID (UID) of the event to update"
@@ -303,16 +212,7 @@ function setupMcpHandlers(s: Server) {
         description: "Lists all available calendars for the authenticated iCloud account.",
         inputSchema: {
           type: "object",
-          properties: {
-            appleId: {
-              type: "string",
-              description: "Your Apple ID [optional, defaults to APP_ID env var]"
-            },
-            appSpecificPassword: {
-              type: "string",
-              description: "Your iCloud App-Specific Password [optional, defaults to APP_PASS env var]"
-            }
-          },
+          properties: {},
           required: []
         }
       }
@@ -341,16 +241,14 @@ s.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
+      const { appleId, appSpecificPassword } = getCredentials();
       const {
-        appleId,
-        appSpecificPassword,
         title,
         description,
         location,
         url,
         startDate,
-        endDate,
-        calendarPath
+        endDate
       } = parsed.data;
 
       const command = new CreateCalendarEventCommand(
@@ -360,7 +258,7 @@ s.setRequestHandler(CallToolRequestSchema, async (request) => {
         description,
         new Date(startDate),
         new Date(endDate),
-        calendarPath,
+        undefined, // calendarPath (always auto-discover)
         location,
         url
       );
@@ -415,10 +313,8 @@ s.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
+      const { appleId, appSpecificPassword } = getCredentials();
       const {
-        appleId,
-        appSpecificPassword,
-        calendarPath,
         startDate,
         endDate
       } = parsed.data;
@@ -443,7 +339,7 @@ s.setRequestHandler(CallToolRequestSchema, async (request) => {
       const query = new RetrieveCalendarEventsQuery(
         appleId,
         appSpecificPassword,
-        calendarPath,
+        undefined, // calendarPath (always auto-discover)
         start,
         end
       );
@@ -489,10 +385,8 @@ s.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
+      const { appleId, appSpecificPassword } = getCredentials();
       const {
-        appleId,
-        appSpecificPassword,
-        calendarPath,
         eventId,
         title,
         description,
@@ -505,7 +399,7 @@ s.setRequestHandler(CallToolRequestSchema, async (request) => {
       const command = new UpdateCalendarEventCommand(
         appleId,
         appSpecificPassword,
-        calendarPath,
+        undefined, // calendarPath (always auto-discover)
         eventId,
         title,
         description,
@@ -540,32 +434,7 @@ s.setRequestHandler(CallToolRequestSchema, async (request) => {
 
   if (toolName === "list_calendars") {
     try {
-      const listCalendarsSchema = z.object({
-        appleId: z
-          .string()
-          .optional()
-          .transform((val) => val || process.env.APP_ID)
-          .refine(
-            (val): val is string => !!val && val.trim() !== "",
-            "Apple ID is required (specify it or set APP_ID env variable)."
-          )
-          .refine(
-            (val) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val),
-            "Invalid Apple ID format. Must be a valid email address."
-          ),
-        appSpecificPassword: z
-          .string()
-          .optional()
-          .transform((val) => val || process.env.APP_PASS)
-          .refine(
-            (val): val is string => !!val && val.trim() !== "",
-            "App-Specific Password is required (specify it or set APP_PASS env variable)."
-          )
-          .refine(
-            (val) => /^[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}$/.test(val),
-            "Invalid App-Specific Password format. Must be formatted as xxxx-xxxx-xxxx-xxxx."
-          )
-      });
+      const listCalendarsSchema = z.object({});
 
       const parsed = listCalendarsSchema.safeParse(request.params.arguments);
       if (!parsed.success) {
@@ -583,7 +452,7 @@ s.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
-      const { appleId, appSpecificPassword } = parsed.data;
+      const { appleId, appSpecificPassword } = getCredentials();
 
       const query = new ListCalendarsQuery(appleId, appSpecificPassword);
       const calendars = await mediator.query<CalendarDto[]>(query);

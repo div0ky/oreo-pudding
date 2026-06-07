@@ -155,11 +155,8 @@ describe("MCP Server JSON-RPC E2E Integration", () => {
         params: {
           name: "create_calendar_event",
           arguments: {
-            appleId,
-            appSpecificPassword,
             startDate: new Date(Date.now() + 60000).toISOString(),
-            endDate: new Date(Date.now() + 120000).toISOString(),
-            calendarPath: TEST_CALENDAR_PATH
+            endDate: new Date(Date.now() + 120000).toISOString()
           }
         }
       });
@@ -175,10 +172,7 @@ describe("MCP Server JSON-RPC E2E Integration", () => {
         method: "tools/call",
         params: {
           name: "list_calendars",
-          arguments: {
-            appleId,
-            appSpecificPassword
-          }
+          arguments: {}
         }
       });
       console.log("listCalendarsResponse:", JSON.stringify(listCalendarsResponse, null, 2));
@@ -190,7 +184,22 @@ describe("MCP Server JSON-RPC E2E Integration", () => {
       expect(calendarList.length).toBeGreaterThan(0);
       expect(calendarList[0].path).toBeDefined();
 
-      // 6. Call tool with correct credentials and details -> should succeed
+      // Resolve the default calendar path dynamically using the ranking heuristic
+      const rankCal = (name: string, path: string): number => {
+        const n = name.toLowerCase();
+        const p = path.toLowerCase();
+        if (n === "home" || p.includes("/home")) return 100;
+        if (n === "personal" || p.includes("/personal")) return 90;
+        if (n === "default" || p.includes("/default")) return 80;
+        if (n === "ajs" || n.includes("ajs") || p.includes("ajs")) return 70;
+        if (n.includes("calendar") || p.includes("calendar")) return 60;
+        if (n.includes("reminder") || n.includes("todo") || n.includes("task")) return -10;
+        return 0;
+      };
+      const sortedList = [...calendarList].sort((a, b) => rankCal(b.name, b.path) - rankCal(a.name, a.path));
+      const defaultCalPath = sortedList[0].path;
+
+      // 6. Call tool with correct details -> should succeed (auto-discovers calendar path)
       const now = new Date();
       const startDate = new Date(now.getTime() + 3 * 60 * 60 * 1000).toISOString(); // 3 hours from now
       const endDate = new Date(now.getTime() + 4 * 60 * 60 * 1000).toISOString(); // 4 hours from now
@@ -202,13 +211,10 @@ describe("MCP Server JSON-RPC E2E Integration", () => {
         params: {
           name: "create_calendar_event",
           arguments: {
-            appleId,
-            appSpecificPassword,
             title: "E2E Test Event via JSON-RPC",
             description: "Created in E2E integration test block.",
             startDate,
-            endDate,
-            calendarPath: TEST_CALENDAR_PATH
+            endDate
           }
         }
       });
@@ -229,7 +235,7 @@ describe("MCP Server JSON-RPC E2E Integration", () => {
       // 7. Clean up: Delete the created event from the live calendar
       console.log(`[E2E] Cleaning up E2E event ${createdEventId}...`);
       const credentials = new AppleCredentials(appleId!, appSpecificPassword!);
-      const cleanPath = TEST_CALENDAR_PATH.startsWith("/") ? TEST_CALENDAR_PATH : `/${TEST_CALENDAR_PATH}`;
+      const cleanPath = defaultCalPath.startsWith("/") ? defaultCalPath : `/${defaultCalPath}`;
       const url = `https://caldav.icloud.com${cleanPath}/${createdEventId}.ics`;
 
       const headers = new Headers();
@@ -253,8 +259,6 @@ describe("MCP Server JSON-RPC E2E Integration", () => {
         params: {
           name: "create_calendar_event",
           arguments: {
-            appleId,
-            appSpecificPassword,
             title: "E2E Auto-Discovered Calendar Event",
             description: "Created in E2E integration test block via auto-discovery.",
             startDate,
@@ -274,21 +278,7 @@ describe("MCP Server JSON-RPC E2E Integration", () => {
       const discEventId = discIdMatch[1];
       console.log(`[E2E] Auto-discovered event created successfully with ID: ${discEventId}`);
 
-      // Clean up auto-discovered event using the same ranking heuristic
-      const rankCal = (name: string, path: string): number => {
-        const n = name.toLowerCase();
-        const p = path.toLowerCase();
-        if (n === "home" || p.includes("/home")) return 100;
-        if (n === "personal" || p.includes("/personal")) return 90;
-        if (n === "default" || p.includes("/default")) return 80;
-        if (n === "ajs" || n.includes("ajs") || p.includes("ajs")) return 70;
-        if (n.includes("calendar") || p.includes("calendar")) return 60;
-        if (n.includes("reminder") || n.includes("todo") || n.includes("task")) return -10;
-        return 0;
-      };
-      const sortedList = [...calendarList].sort((a, b) => rankCal(b.name, b.path) - rankCal(a.name, a.path));
-      const defaultCalPath = sortedList[0].path;
-
+      // Clean up auto-discovered event using the same dynamically discovered path
       const cleanDiscPath = defaultCalPath.startsWith("/") ? defaultCalPath : `/${defaultCalPath}`;
       const discUrl = `https://caldav.icloud.com${cleanDiscPath}/${discEventId}.ics`;
       const discDeleteResponse = await fetch(discUrl, {

@@ -225,64 +225,38 @@ describe("Application Layer CQRS Command Pipeline", () => {
   });
 });
 
-describe("Zod Edge Validation Schema", () => {
-  test("should fallback to environment variables when appleId or appSpecificPassword are omitted", async () => {
+describe("Zod Edge Validation Schema & Environment Credentials", () => {
+  test("should retrieve credentials from environment variables when valid", async () => {
     const originalId = process.env.APP_ID;
     const originalPass = process.env.APP_PASS;
-    const originalToken = process.env.BEARER_TOKEN;
 
     try {
       process.env.APP_ID = "env-apple-id@icloud.com";
       process.env.APP_PASS = "envx-envy-envz-envw";
-      process.env.BEARER_TOKEN = "env-token";
 
-      const { createCalendarEventSchema } = await import("../src/index.ts");
-      
-      const payload = {
-        title: "Test Event",
-        startDate: "2026-06-07T12:00:00Z",
-        endDate: "2026-06-07T13:00:00Z",
-        calendarPath: "calendars/personal"
-      };
-
-      const result = createCalendarEventSchema.safeParse(payload);
-      expect(result.success).toBe(true);
-      if (result.success) {
-        expect(result.data.appleId).toBe("env-apple-id@icloud.com");
-        expect(result.data.appSpecificPassword).toBe("envx-envy-envz-envw");
-      }
+      const { getCredentials } = await import("../src/index.ts");
+      const creds = getCredentials();
+      expect(creds.appleId).toBe("env-apple-id@icloud.com");
+      expect(creds.appSpecificPassword).toBe("envx-envy-envz-envw");
     } finally {
       process.env.APP_ID = originalId;
       process.env.APP_PASS = originalPass;
-      process.env.BEARER_TOKEN = originalToken;
     }
   });
 
-  test("should fail if no credentials provided in parameters and env vars are missing", async () => {
+  test("should fail if credentials environment variables are missing", async () => {
     const originalId = process.env.APP_ID;
     const originalPass = process.env.APP_PASS;
-    const originalToken = process.env.BEARER_TOKEN;
 
     try {
       delete process.env.APP_ID;
       delete process.env.APP_PASS;
-      process.env.BEARER_TOKEN = "env-token";
 
-      const { createCalendarEventSchema } = await import("../src/index.ts");
-
-      const payload = {
-        title: "Test Event",
-        startDate: "2026-06-07T12:00:00Z",
-        endDate: "2026-06-07T13:00:00Z",
-        calendarPath: "calendars/personal"
-      };
-
-      const result = createCalendarEventSchema.safeParse(payload);
-      expect(result.success).toBe(false);
+      const { getCredentials } = await import("../src/index.ts");
+      expect(() => getCredentials()).toThrow();
     } finally {
       process.env.APP_ID = originalId;
       process.env.APP_PASS = originalPass;
-      process.env.BEARER_TOKEN = originalToken;
     }
   });
 });
