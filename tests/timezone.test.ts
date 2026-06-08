@@ -52,4 +52,14 @@ describe("TimeZoneHelper", () => {
     const formattedUtc = formatInTimeZone(utcDate, "UTC");
     expect(formattedUtc).toBe("2026-06-07T20:00:00.000Z");
   });
+
+  test("parseInTimeZone should parse date-only strings without treating the day suffix as a timezone offset", () => {
+    // Should parse June 8 as midnight in Chicago, which is 05:00 UTC (CDT = UTC-5)
+    const dateOnly = parseInTimeZone("2026-06-08", "America/Chicago");
+    expect(dateOnly.toISOString()).toBe("2026-06-08T05:00:00.000Z");
+
+    // December 8 is standard time (CST = UTC-6)
+    const dateOnlyStd = parseInTimeZone("2026-12-08", "America/Chicago");
+    expect(dateOnlyStd.toISOString()).toBe("2026-12-08T06:00:00.000Z");
+  });
 });

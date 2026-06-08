@@ -436,7 +436,11 @@ s.setRequestHandler(CallToolRequestSchema, async (request) => {
       } else if (startDate && !endDate) {
         // Default to 24h day from startDate in target timezone
         start = parseInTimeZone(startDate, targetTz);
-        end = new Date(start.getTime() + 24 * 60 * 60 * 1000 - 1);
+        if (/^\d{4}-\d{2}-\d{2}$/.test(startDate.trim())) {
+          end = parseInTimeZone(`${startDate.trim()}T23:59:59.999`, targetTz);
+        } else {
+          end = new Date(start.getTime() + 24 * 60 * 60 * 1000 - 1);
+        }
       } else {
         start = startDate ? parseInTimeZone(startDate, targetTz) : new Date(0);
         end = endDate ? parseInTimeZone(endDate, targetTz) : new Date(Date.now() + 100 * 365 * 24 * 60 * 60 * 1000);
@@ -518,7 +522,11 @@ s.setRequestHandler(CallToolRequestSchema, async (request) => {
       } else if (startDate && !endDate) {
         // Default to 24h day from startDate in target timezone
         start = parseInTimeZone(startDate, targetTz);
-        end = new Date(start.getTime() + 24 * 60 * 60 * 1000 - 1);
+        if (/^\d{4}-\d{2}-\d{2}$/.test(startDate.trim())) {
+          end = parseInTimeZone(`${startDate.trim()}T23:59:59.999`, targetTz);
+        } else {
+          end = new Date(start.getTime() + 24 * 60 * 60 * 1000 - 1);
+        }
       } else {
         start = startDate ? parseInTimeZone(startDate, targetTz) : new Date(0);
         end = endDate ? parseInTimeZone(endDate, targetTz) : new Date(Date.now() + 100 * 365 * 24 * 60 * 60 * 1000);

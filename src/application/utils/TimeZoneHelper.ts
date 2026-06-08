@@ -16,7 +16,7 @@ export function isValidTimeZone(timeZone: string): boolean {
 export function parseInTimeZone(dateStr: string, timeZone: string = "America/Chicago"): Date {
   const trimmed = dateStr.trim();
   // Check if there is an explicit timezone indicator (Z or +/-offset)
-  const hasOffset = /[Zz]|[+-]\d{2}(:?\d{2})?$/.test(trimmed);
+  const hasOffset = /[Zz]$|(?:\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?)(?:[+-]\d{2}(?::?\d{2})?)$/.test(trimmed);
   
   if (hasOffset) {
     return new Date(trimmed);
