@@ -753,13 +753,10 @@ s.setRequestHandler(CallToolRequestSchema, async (request) => {
 // 5. Connect and listen using standard I/O streams or SSE transport depending on PORT env variable
 if (process.env.PORT) {
   const activeTransports = new Map<string, WebStandardSSEServerTransport>();
-
-  // Instantiate Streamable HTTP transport for backward compatibility
-  const streamableTransport = new WebStandardStreamableHTTPServerTransport({
-    sessionIdGenerator: () => crypto.randomUUID(),
-  });
-  const primaryMcpServer = createMcpServer();
-  await primaryMcpServer.connect(streamableTransport);
+  // One Streamable HTTP transport (plus its Server) per MCP session.
+  // A single shared transport/Server can only serve one session because the
+  // SDK rejects re-initialization with "Server already initialized".
+  const streamableTransports = new Map<string, WebStandardStreamableHTTPServerTransport>();
 
   const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
@@ -767,6 +764,59 @@ if (process.env.PORT) {
     "Access-Control-Allow-Headers": "Content-Type, Authorization, mcp-session-id, Last-Event-ID, mcp-protocol-version",
     "Access-Control-Expose-Headers": "mcp-session-id, mcp-protocol-version"
   };
+
+  /**
+   * Builds a JSON-RPC error response matching the SDK transport's shape
+   * for session routing failures (unknown/missing session id).
+   */
+  function streamableSessionError(status: number, code: number, message: string): Response {
+    return new Response(
+      JSON.stringify({ jsonrpc: "2.0", error: { code, message }, id: null }),
+      {
+        status,
+        headers: {
+          "Content-Type": "application/json",
+          ...corsHeaders
+        }
+      }
+    );
+  }
+
+  /**
+   * Returns true when a pre-parsed JSON-RPC body contains an initialize request.
+   * Used to decide whether a session-less POST may mint a new session.
+   */
+  function isInitializeBody(body: unknown): boolean {
+    const messages = Array.isArray(body) ? body : [body];
+    return messages.some(
+      (m) => typeof m === "object" && m !== null && (m as { method?: unknown }).method === "initialize"
+    );
+  }
+
+  /**
+   * Creates a fresh Streamable HTTP transport backed by its own MCP Server,
+   * registers it in the session map once initialized, and removes it on close.
+   */
+  async function createStreamableSession(): Promise<WebStandardStreamableHTTPServerTransport> {
+    let transport!: WebStandardStreamableHTTPServerTransport;
+    transport = new WebStandardStreamableHTTPServerTransport({
+      sessionIdGenerator: () => crypto.randomUUID(),
+      onsessioninitialized: (sessionId) => {
+        streamableTransports.set(sessionId, transport);
+      },
+      onsessionclosed: (sessionId) => {
+        streamableTransports.delete(sessionId);
+      }
+    });
+    transport.onclose = () => {
+      if (transport.sessionId) {
+        streamableTransports.delete(transport.sessionId);
+      }
+    };
+    const sessionServer = createMcpServer();
+    await sessionServer.connect(transport);
+    return transport;
+  }
 
   const port = parseInt(process.env.PORT, 10);
   Bun.serve({
@@ -849,10 +899,26 @@ if (process.env.PORT) {
           return transport.createResponse();
         }
 
+        // Standalone SSE stream for Streamable HTTP sessions (GET /mcp)
+        if (url.pathname === "/mcp") {
+          if (!sessionIdHeader) {
+            return streamableSessionError(400, -32000, "Bad Request: Mcp-Session-Id header is required");
+          }
+          const existing = streamableTransports.get(sessionIdHeader);
+          if (!existing) {
+            return streamableSessionError(404, -32001, "Session not found");
+          }
+          return existing.handleRequest(req);
+        }
+
         if (url.pathname === "/") {
-          // If we have a session header, delegate to streamable HTTP transport
+          // If we have a session header, delegate to this session's streamable HTTP transport
           if (sessionIdHeader) {
-            return streamableTransport.handleRequest(req);
+            const existing = streamableTransports.get(sessionIdHeader);
+            if (!existing) {
+              return streamableSessionError(404, -32001, "Session not found");
+            }
+            return existing.handleRequest(req);
           }
           // Otherwise, if client requests event-stream, treat as classic SSE GET connection
           if (accept?.includes("text/event-stream")) {
@@ -899,13 +965,47 @@ if (process.env.PORT) {
           return transport.handlePostMessage(req);
         }
 
-        // Delegate other POST requests (e.g. POST / or POST /mcp) to Streamable HTTP transport
-        return streamableTransport.handleRequest(req);
+        // Route other POST requests (e.g. POST / or POST /mcp) to per-session Streamable HTTP transports
+        const streamableSessionId = req.headers.get("mcp-session-id");
+        if (streamableSessionId) {
+          const existing = streamableTransports.get(streamableSessionId);
+          if (!existing) {
+            return streamableSessionError(404, -32001, "Session not found");
+          }
+          return existing.handleRequest(req);
+        }
+
+        // No session header: only an initialize request may mint a new session.
+        // Peek at a clone so the original Request body stays intact for the transport.
+        let parsedBody: unknown;
+        try {
+          parsedBody = await req.clone().json();
+        } catch {
+          return streamableSessionError(400, -32700, "Parse error: Invalid JSON");
+        }
+        if (!isInitializeBody(parsedBody)) {
+          return streamableSessionError(400, -32000, "Bad Request: Mcp-Session-Id header is required");
+        }
+        const transport = await createStreamableSession();
+        const response = await transport.handleRequest(req, { parsedBody });
+        if (!transport.sessionId) {
+          // Initialization failed before a session was minted; don't leak the Server.
+          await transport.close().catch(() => {});
+        }
+        return response;
       }
 
-      // Delegate DELETE requests (e.g. session termination) to Streamable HTTP transport
+      // Route DELETE requests (e.g. session termination) to this session's Streamable HTTP transport
       if (req.method === "DELETE") {
-        return streamableTransport.handleRequest(req);
+        const deleteSessionId = req.headers.get("mcp-session-id");
+        if (!deleteSessionId) {
+          return streamableSessionError(400, -32000, "Bad Request: Mcp-Session-Id header is required");
+        }
+        const existing = streamableTransports.get(deleteSessionId);
+        if (!existing) {
+          return streamableSessionError(404, -32001, "Session not found");
+        }
+        return existing.handleRequest(req);
       }
 
       return new Response("Not Found", { status: 404, headers: corsHeaders });
