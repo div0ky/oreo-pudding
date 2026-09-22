@@ -49,6 +49,9 @@ APP_PASS="xxxx-xxxx-xxxx-xxxx" # iCloud App-Specific Password
 # Optional: Server configuration for SSE mode
 PORT=3000
 BEARER_TOKEN="your-secure-bearer-token"
+
+# Required only for the Busy ICS feed (GET /busy.ics)
+FEED_TOKEN="your-long-random-feed-token"
 ```
 
 > [!IMPORTANT]
@@ -151,6 +154,28 @@ Quickly reschedules an existing event to a new start date/time (optionally keepi
     *   `endDate` (string, optional): New ISO 8601 end date/time. If omitted, the event's original duration is preserved.
     *   `calendarPath` (string, optional): The calendar path where the event is located. If omitted, the server will auto-discover the correct calendar.
     *   `timezone` (string, optional): Target timezone.
+
+---
+
+## 📅 Busy ICS Feed (Availability Only)
+
+Subscribe to a privacy-masked feed of your 8am-5pm availability. Only runs in HTTP mode (`PORT` set).
+
+```bash
+PORT=3000 FEED_TOKEN="your-long-random-feed-token" bun run index.ts
+```
+
+Subscribe with:
+
+```text
+http://localhost:3000/busy.ics?token=your-long-random-feed-token
+```
+
+*   Each event is emitted as `SUMMARY:Busy` with no title, description, location, or URL.
+*   Only events overlapping 08:00-17:00 in the target timezone are included, clamped to that window and split per workday. All-day events are skipped.
+*   Default window is past 30 days plus next 60 days. Override with `?days=N`, or `?start=ISO&end=ISO`.
+*   Optional params: `?timezone=America/Chicago`, `?omit=Family,Birthdays` (comma-separated calendar names/paths to exclude).
+*   Responses are `text/calendar` with `Cache-Control: private, max-age=300` and reuse the 5-minute CalDAV SWR cache.
 
 ---
 

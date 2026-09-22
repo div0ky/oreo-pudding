@@ -7,6 +7,7 @@ import {
   ListToolsRequestSchema
 } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
+import { timingSafeEqual } from "node:crypto";
 import { Mediator } from "./application/mediator/Mediator";
 import { CreateCalendarEventCommand } from "./application/calendar/commands/CreateCalendarEventCommand";
 import { CreateCalendarEventCommandHandler } from "./application/calendar/commands/CreateCalendarEventCommandHandler";
@@ -23,6 +24,9 @@ import { ICalSerializationStrategy } from "./infrastructure/calendar/serializati
 import { InvalidDateRangeException } from "./domain/calendar/exceptions/InvalidDateRangeException";
 import { RetrieveAllCalendarEventsQuery, type CalendarEventsDto } from "./application/calendar/queries/RetrieveAllCalendarEventsQuery";
 import { RetrieveAllCalendarEventsQueryHandler } from "./application/calendar/queries/RetrieveAllCalendarEventsQueryHandler";
+import { GetBusyFeedQuery } from "./application/calendar/queries/GetBusyFeedQuery";
+import { GetBusyFeedQueryHandler } from "./application/calendar/queries/GetBusyFeedQueryHandler";
+import { BusyFeedSerializationStrategy } from "./infrastructure/calendar/serialization/BusyFeedSerializationStrategy";
 import { parseInTimeZone, formatInTimeZone, isValidTimeZone } from "./application/utils/TimeZoneHelper";
 
 // 1. Initialize CQRS Mediator & Handler Pipeline
@@ -43,6 +47,9 @@ mediator.registerQuery(RetrieveCalendarEventsQuery, retrieveHandler);
 mediator.registerQuery(ListCalendarsQuery, listCalendarsHandler);
 const retrieveAllHandler = new RetrieveAllCalendarEventsQueryHandler(repository);
 mediator.registerQuery(RetrieveAllCalendarEventsQuery, retrieveAllHandler);
+const busyFeedSerializer = new BusyFeedSerializationStrategy();
+const busyFeedHandler = new GetBusyFeedQueryHandler(repository, busyFeedSerializer);
+mediator.registerQuery(GetBusyFeedQuery, busyFeedHandler);
 /**
  * Retrieves Apple ID and App-Specific Password credentials from environment variables and validates their format.
  */
@@ -73,6 +80,81 @@ appSpecificPassword: string } {
   }
 
   return { appleId, appSpecificPassword };
+}
+
+/**
+ * Validates a provided feed token against the expected FEED_TOKEN using a
+ * timing-safe comparison. Returns false when either value is missing.
+ */
+export function isFeedTokenValid(
+  provided: string | null | undefined,
+  expected: string | undefined
+): boolean {
+  if (!provided || !expected) {
+    return false;
+  }
+  const a = Buffer.from(provided, "utf8");
+  const b = Buffer.from(expected, "utf8");
+  if (a.length !== b.length) {
+    return false;
+  }
+  return timingSafeEqual(a, b);
+}
+
+/**
+ * Resolves the Busy feed date window from query params.
+ * Defaults to past 30 days plus next 60 days in the target timezone.
+ */
+export function resolveBusyFeedWindow(params: {
+  start?: string | null;
+  end?: string | null;
+  days?: string | null;
+  timezone?: string | null;
+  now?: Date;
+}): { start: Date; end: Date; timezone: string } {
+  const requestedTz = params.timezone?.trim();
+  const timezone =
+    requestedTz && isValidTimeZone(requestedTz)
+      ? requestedTz
+      : "America/Chicago";
+  const now = params.now ?? new Date();
+
+  if (params.start || params.end) {
+    const start = params.start
+      ? parseInTimeZone(params.start, timezone)
+      : new Date(0);
+    const end = params.end
+      ? parseInTimeZone(params.end, timezone)
+      : new Date(Date.now() + 100 * 365 * 24 * 60 * 60 * 1000);
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+      throw new Error("Invalid start or end date. Must be ISO-8601.");
+    }
+    if (end.getTime() <= start.getTime()) {
+      throw new Error("Invalid date range: end must be after start.");
+    }
+    return { start, end, timezone };
+  }
+
+  let totalDays = 90;
+  let pastDays = 30;
+  let futureDays = 60;
+  if (params.days !== undefined && params.days !== null && params.days !== "") {
+    totalDays = Number.parseInt(params.days, 10);
+    if (!Number.isInteger(totalDays) || totalDays < 1 || totalDays > 365) {
+      throw new Error("Invalid days param. Must be an integer between 1 and 365.");
+    }
+    pastDays = Math.floor(totalDays / 3);
+    futureDays = totalDays - pastDays;
+  }
+
+  const todayStr = formatInTimeZone(now, timezone).substring(0, 10);
+  const startOfToday = parseInTimeZone(`${todayStr}T00:00:00`, timezone);
+  const endOfToday = parseInTimeZone(`${todayStr}T23:59:59.999`, timezone);
+  const start = new Date(
+    startOfToday.getTime() - pastDays * 24 * 60 * 60 * 1000
+  );
+  const end = new Date(endOfToday.getTime() + futureDays * 24 * 60 * 60 * 1000);
+  return { start, end, timezone };
 }
 
 // 2. Define Network Edge Validation Schema using Zod
@@ -832,7 +914,9 @@ if (process.env.PORT) {
 
       // Verify Authorization header if BEARER_TOKEN is configured in environment,
       // exempting public health checks and dashboard routes (GET /health, GET /, GET /dashboard, GET /dashboard.html)
-      // when not requesting SSE/sessions.
+      // when not requesting SSE/sessions. The Busy ICS feed uses its own
+      // FEED_TOKEN query param so calendar apps can subscribe without headers.
+      const isBusyFeedRoute = url.pathname === "/busy.ics";
       const isPublicEndpoint = (req.method === "GET" && (
         url.pathname === "/health" ||
         url.pathname === "/" ||
@@ -840,7 +924,7 @@ if (process.env.PORT) {
         url.pathname === "/dashboard.html"
       )) && !(accept?.includes("text/event-stream") || sessionIdHeader);
 
-      if (!isPublicEndpoint && process.env.BEARER_TOKEN) {
+      if (!isPublicEndpoint && !isBusyFeedRoute && process.env.BEARER_TOKEN) {
         const authHeader = req.headers.get("Authorization");
         if (!authHeader || !authHeader.startsWith("Bearer ")) {
           return new Response(
@@ -866,6 +950,122 @@ if (process.env.PORT) {
               }
             }
           );
+        }
+      }
+
+      // Busy ICS feed endpoint (GET /busy.ics, HEAD /busy.ics)
+      if (isBusyFeedRoute) {
+        if (req.method !== "GET" && req.method !== "HEAD") {
+          return new Response("Method Not Allowed", {
+            status: 405,
+            headers: corsHeaders
+          });
+        }
+
+        const feedToken = process.env.FEED_TOKEN;
+        if (!feedToken) {
+          return new Response(
+            JSON.stringify({ error: "Busy feed is not configured" }),
+            {
+              status: 500,
+              headers: {
+                "Content-Type": "application/json",
+                ...corsHeaders
+              }
+            }
+          );
+        }
+
+        const queryToken = url.searchParams.get("token");
+        const feedAuthHeader = req.headers.get("Authorization");
+        const bearerToken = feedAuthHeader?.startsWith("Bearer ")
+          ? feedAuthHeader.substring(7).trim()
+          : null;
+        const providedToken = queryToken ?? bearerToken;
+        if (!isFeedTokenValid(providedToken, feedToken)) {
+          return new Response(
+            JSON.stringify({ error: "Unauthorized: Invalid feed token" }),
+            {
+              status: 401,
+              headers: {
+                "Content-Type": "application/json",
+                ...corsHeaders
+              }
+            }
+          );
+        }
+
+        let window: { start: Date; end: Date; timezone: string };
+        try {
+          window = resolveBusyFeedWindow({
+            start: url.searchParams.get("start"),
+            end: url.searchParams.get("end"),
+            days: url.searchParams.get("days"),
+            timezone: url.searchParams.get("timezone")
+          });
+        } catch (error: any) {
+          return new Response(
+            JSON.stringify({ error: error.message || "Invalid feed parameters" }),
+            {
+              status: 400,
+              headers: {
+                "Content-Type": "application/json",
+                ...corsHeaders
+              }
+            }
+          );
+        }
+
+        const omitParam = url.searchParams.get("omit");
+        const omit = omitParam
+          ? omitParam
+              .split(",")
+              .map((s) => s.trim())
+              .filter((s) => s !== "")
+          : undefined;
+
+        if (req.method === "HEAD") {
+          return new Response(null, {
+            status: 200,
+            headers: {
+              "Content-Type": "text/calendar; charset=utf-8",
+              "Content-Disposition": 'inline; filename="busy.ics"',
+              "Cache-Control": "private, max-age=300",
+              ...corsHeaders
+            }
+          });
+        }
+
+        try {
+          const ics = await mediator.query<string>(
+            new GetBusyFeedQuery(window.start, window.end, omit, window.timezone)
+          );
+          return new Response(ics, {
+            status: 200,
+            headers: {
+              "Content-Type": "text/calendar; charset=utf-8",
+              "Content-Disposition": 'inline; filename="busy.ics"',
+              "Cache-Control": "private, max-age=300",
+              ...corsHeaders
+            }
+          });
+        } catch (error: any) {
+          console.error("Busy feed failed:", error);
+          const msg: string = error.message || "";
+          const isCredentials =
+            msg.includes("Apple ID") ||
+            msg.includes("Password") ||
+            msg.toLowerCase().includes("credential");
+          const message = isCredentials
+            ? "Busy feed credentials are not configured"
+            : "Failed to build busy feed";
+          return new Response(JSON.stringify({ error: message }), {
+            status: isCredentials ? 500 : 502,
+            headers: {
+              "Content-Type": "application/json",
+              ...corsHeaders
+            }
+          });
         }
       }
 
