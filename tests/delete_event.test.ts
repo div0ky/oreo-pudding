@@ -7,8 +7,14 @@ import { AppleCredentials } from "../src/domain/calendar/value-objects/AppleCred
 import { CalendarEvent } from "../src/domain/calendar/CalendarEvent";
 import { DeleteCalendarEventCommand } from "../src/application/calendar/commands/DeleteCalendarEventCommand";
 import { DeleteCalendarEventCommandHandler } from "../src/application/calendar/commands/DeleteCalendarEventCommandHandler";
+import { GetCalendarEventByIdQuery } from "../src/application/calendar/queries/GetCalendarEventByIdQuery";
+import { GetCalendarEventByIdQueryHandler } from "../src/application/calendar/queries/GetCalendarEventByIdQueryHandler";
 import type { ICalDavRepository } from "../src/domain/calendar/ICalDavRepository";
 import { CalDavRepository } from "../src/infrastructure/calendar/repository/CalDavRepository";
+import {
+  mintDeleteConfirmation,
+  verifyDeleteConfirmation
+} from "../src/interface/mcp/DeleteConfirmation";
 
 describe("DeleteCalendarEventCommandHandler", () => {
   const originalAppId = process.env.APP_ID;
@@ -209,6 +215,228 @@ describe("DeleteCalendarEventCommandHandler", () => {
   });
 });
 
+describe("GetCalendarEventByIdQueryHandler", () => {
+  const originalAppId = process.env.APP_ID;
+  const originalAppPass = process.env.APP_PASS;
+
+  beforeEach(() => {
+    process.env.APP_ID = "test@icloud.com";
+    process.env.APP_PASS = "abcd-efgh-ijkl-mnop";
+  });
+
+  afterEach(() => {
+    if (originalAppId === undefined) {
+      delete process.env.APP_ID;
+    } else {
+      process.env.APP_ID = originalAppId;
+    }
+    if (originalAppPass === undefined) {
+      delete process.env.APP_PASS;
+    } else {
+      process.env.APP_PASS = originalAppPass;
+    }
+  });
+
+  function makeEvent(id: string): CalendarEvent {
+    const range = new DateRange(
+      new Date("2026-06-07T12:00:00Z"),
+      new Date("2026-06-07T13:00:00Z")
+    );
+    return CalendarEvent.restore(
+      new EventId(id),
+      range,
+      new EventDetails("Preview Event", "Notes here", "Room 1", "https://example.com")
+    );
+  }
+
+  test("should return a detail DTO for an event in the explicit calendar path", async () => {
+    const event = makeEvent("event-123");
+
+    const mockRepo: ICalDavRepository = {
+      async save() {},
+      async delete() {},
+      async findById(eventId) {
+        return eventId === "event-123" ? event : null;
+      },
+      async find() {
+        return [];
+      },
+      async discoverCalendars() {
+        return [{ name: "home", path: "calendars/home" }];
+      },
+      getDefaultCalendar(calendars) {
+        const first = calendars[0];
+        if (!first) throw new Error("No calendars");
+        return first;
+      }
+    };
+
+    const handler = new GetCalendarEventByIdQueryHandler(mockRepo);
+    const result = await handler.handle(
+      new GetCalendarEventByIdQuery("event-123", "calendars/home")
+    );
+
+    expect(result.eventId).toBe("event-123");
+    expect(result.calendarPath).toBe("calendars/home");
+    expect(result.title).toBe("Preview Event");
+    expect(result.description).toBe("Notes here");
+    expect(result.location).toBe("Room 1");
+    expect(result.url).toBe("https://example.com");
+    expect(result.startDate).toBe("2026-06-07T12:00:00.000Z");
+    expect(result.endDate).toBe("2026-06-07T13:00:00.000Z");
+  });
+
+  test("should auto-discover the holding calendar and include its name", async () => {
+    const event = makeEvent("search-event-123");
+
+    const mockRepo: ICalDavRepository = {
+      async save() {},
+      async delete() {},
+      async findById(eventId, credentials, calendarPath) {
+        if (eventId === "search-event-123" && calendarPath.value === "calendars/work") {
+          return event;
+        }
+        return null;
+      },
+      async find() {
+        return [];
+      },
+      async discoverCalendars() {
+        return [
+          { name: "home", path: "calendars/home" },
+          { name: "Work", path: "calendars/work" }
+        ];
+      },
+      getDefaultCalendar(calendars) {
+        const first = calendars[0];
+        if (!first) throw new Error("No calendars");
+        return first;
+      }
+    };
+
+    const handler = new GetCalendarEventByIdQueryHandler(mockRepo);
+    const result = await handler.handle(new GetCalendarEventByIdQuery("search-event-123"));
+
+    expect(result.eventId).toBe("search-event-123");
+    expect(result.calendarPath).toBe("calendars/work");
+    expect(result.calendarName).toBe("Work");
+  });
+
+  test("should throw when the event is not found anywhere", async () => {
+    const mockRepo: ICalDavRepository = {
+      async save() {},
+      async delete() {},
+      async findById() {
+        return null;
+      },
+      async find() {
+        return [];
+      },
+      async discoverCalendars() {
+        return [{ name: "home", path: "calendars/home" }];
+      },
+      getDefaultCalendar(calendars) {
+        const first = calendars[0];
+        if (!first) throw new Error("No calendars");
+        return first;
+      }
+    };
+
+    const handler = new GetCalendarEventByIdQueryHandler(mockRepo);
+    expect(handler.handle(new GetCalendarEventByIdQuery("ghost-event"))).rejects.toThrow(
+      "Calendar event with ID 'ghost-event' not found across any discovered calendars."
+    );
+  });
+});
+
+describe("DeleteConfirmation tokens", () => {
+  const originalSecret = process.env.DELETE_CONFIRM_SECRET;
+  const originalBearer = process.env.BEARER_TOKEN;
+
+  beforeEach(() => {
+    process.env.DELETE_CONFIRM_SECRET = "test-confirm-secret";
+    delete process.env.BEARER_TOKEN;
+  });
+
+  afterEach(() => {
+    if (originalSecret === undefined) {
+      delete process.env.DELETE_CONFIRM_SECRET;
+    } else {
+      process.env.DELETE_CONFIRM_SECRET = originalSecret;
+    }
+    if (originalBearer === undefined) {
+      delete process.env.BEARER_TOKEN;
+    } else {
+      process.env.BEARER_TOKEN = originalBearer;
+    }
+  });
+
+  test("should mint tokens that verify for the bound event", () => {
+    const { token, expiresAt } = mintDeleteConfirmation("event-123", "calendars/home");
+
+    expect(token.startsWith("v1.")).toBe(true);
+    expect(new Date(expiresAt).getTime()).toBeGreaterThan(Date.now());
+
+    const result = verifyDeleteConfirmation(token, "event-123");
+    expect(result.valid).toBe(true);
+    expect(result.payload?.eventId).toBe("event-123");
+    expect(result.payload?.calendarPath).toBe("calendars/home");
+  });
+
+  test("should reject tokens with a tampered signature", () => {
+    const { token } = mintDeleteConfirmation("event-123", "calendars/home");
+    const tampered = token.slice(0, -1) + (token.endsWith("A") ? "B" : "A");
+
+    const result = verifyDeleteConfirmation(tampered, "event-123");
+    expect(result.valid).toBe(false);
+    expect(result.reason).toBe("signature");
+  });
+
+  test("should reject tokens with a tampered payload", () => {
+    const { token } = mintDeleteConfirmation("event-123", "calendars/home");
+    const parts = token.split(".");
+    const payload = parts[1] as string;
+    const tamperedPayload = payload.slice(0, -2) + (payload.endsWith("AA") ? "BB" : "AA");
+
+    const result = verifyDeleteConfirmation(`v1.${tamperedPayload}.${parts[2]}`, "event-123");
+    expect(result.valid).toBe(false);
+    expect(result.reason).toBe("signature");
+  });
+
+  test("should reject expired tokens", () => {
+    const { token } = mintDeleteConfirmation("event-123", "calendars/home", -60);
+
+    const result = verifyDeleteConfirmation(token, "event-123");
+    expect(result.valid).toBe(false);
+    expect(result.reason).toBe("expired");
+  });
+
+  test("should reject tokens bound to a different event", () => {
+    const { token } = mintDeleteConfirmation("event-A", "calendars/home");
+
+    const result = verifyDeleteConfirmation(token, "event-B");
+    expect(result.valid).toBe(false);
+    expect(result.reason).toBe("mismatch");
+  });
+
+  test("should reject malformed tokens", () => {
+    for (const bad of ["", "not-a-token", "v1.only-two", "v2.a.b"]) {
+      const result = verifyDeleteConfirmation(bad, "event-123");
+      expect(result.valid).toBe(false);
+      expect(result.reason).toBe("malformed");
+    }
+  });
+
+  test("should reject tokens minted with a different secret", () => {
+    const { token } = mintDeleteConfirmation("event-123", "calendars/home");
+    process.env.DELETE_CONFIRM_SECRET = "a-different-secret";
+
+    const result = verifyDeleteConfirmation(token, "event-123");
+    expect(result.valid).toBe(false);
+    expect(result.reason).toBe("signature");
+  });
+});
+
 describe("CalDavRepository delete", () => {
   const credentials = new AppleCredentials("test@icloud.com", "abcd-efgh-ijkl-mnop");
   const calendarPath = new CalendarPath("calendars/home");
@@ -284,8 +512,11 @@ describe("CalDavRepository delete", () => {
 });
 
 describe("delete_calendar_event MCP tool confirmation", () => {
-  async function spawnStdioServer() {
+  const originalSecret = process.env.DELETE_CONFIRM_SECRET;
+
+  async function spawnStdioServer(extraEnv: Record<string, string> = {}) {
     const proc = Bun.spawn(["bun", "run", "src/index.ts"], {
+      env: { ...process.env, ...extraEnv },
       stdout: "pipe",
       stdin: "pipe",
       stderr: "ignore"
@@ -316,13 +547,7 @@ describe("delete_calendar_event MCP tool confirmation", () => {
       await writer.flush();
     }
 
-    return { proc, readMessage, sendMessage };
-  }
-
-  test("tools/list should expose delete_calendar_event as destructive", async () => {
-    const { proc, readMessage, sendMessage } = await spawnStdioServer();
-
-    try {
+    async function initialize(): Promise<void> {
       await sendMessage({
         jsonrpc: "2.0",
         id: 1,
@@ -335,8 +560,25 @@ describe("delete_calendar_event MCP tool confirmation", () => {
       });
       const initResponse = await readMessage();
       expect(initResponse.id).toBe(1);
-
       await sendMessage({ jsonrpc: "2.0", method: "notifications/initialized" });
+    }
+
+    return { proc, readMessage, sendMessage, initialize };
+  }
+
+  afterEach(() => {
+    if (originalSecret === undefined) {
+      delete process.env.DELETE_CONFIRM_SECRET;
+    } else {
+      process.env.DELETE_CONFIRM_SECRET = originalSecret;
+    }
+  });
+
+  test("tools/list should expose delete_calendar_event as destructive", async () => {
+    const { proc, readMessage, sendMessage, initialize } = await spawnStdioServer();
+
+    try {
+      await initialize();
       await sendMessage({ jsonrpc: "2.0", id: 2, method: "tools/list" });
       const listResponse = await readMessage();
 
@@ -346,91 +588,90 @@ describe("delete_calendar_event MCP tool confirmation", () => {
       expect(deleteTool.annotations).toBeDefined();
       expect(deleteTool.annotations.destructiveHint).toBe(true);
       expect(deleteTool.annotations.readOnlyHint).toBe(false);
+      expect(deleteTool.inputSchema.properties.confirmationToken).toBeDefined();
     } finally {
       proc.kill();
     }
   });
 
-  test("should refuse deletion when the client does not support elicitation", async () => {
-    const { proc, readMessage, sendMessage } = await spawnStdioServer();
+  test("should reject a malformed confirmation token without touching CalDAV", async () => {
+    // No credentials or shared secret needed: verification fails first.
+    const { proc, readMessage, sendMessage, initialize } = await spawnStdioServer();
 
     try {
-      await sendMessage({
-        jsonrpc: "2.0",
-        id: 1,
-        method: "initialize",
-        params: {
-          protocolVersion: "2024-11-05",
-          capabilities: {},
-          clientInfo: { name: "test-client", version: "1.0.0" }
-        }
-      });
-      await readMessage(); // initialize result
-      await sendMessage({ jsonrpc: "2.0", method: "notifications/initialized" });
-
+      await initialize();
       await sendMessage({
         jsonrpc: "2.0",
         id: 2,
         method: "tools/call",
         params: {
           name: "delete_calendar_event",
-          arguments: { eventId: "any-event-id" }
+          arguments: { eventId: "any-event-id", confirmationToken: "garbage-token" }
         }
       });
       const callResponse = await readMessage();
 
       expect(callResponse.id).toBe(2);
       expect(callResponse.result.isError).toBe(true);
-      expect(callResponse.result.content[0].text).toContain("Deletion refused");
+      expect(callResponse.result.content[0].text).toContain("Confirmation token is invalid");
+      expect(callResponse.result.content[0].text).toContain("was not deleted");
     } finally {
       proc.kill();
     }
   });
 
-  test("should cancel deletion when the user declines confirmation", async () => {
-    const { proc, readMessage, sendMessage } = await spawnStdioServer();
+  test("should reject an expired confirmation token", async () => {
+    process.env.DELETE_CONFIRM_SECRET = "test-mcp-secret";
+    const { proc, readMessage, sendMessage, initialize } = await spawnStdioServer({
+      DELETE_CONFIRM_SECRET: "test-mcp-secret"
+    });
 
     try {
-      await sendMessage({
-        jsonrpc: "2.0",
-        id: 1,
-        method: "initialize",
-        params: {
-          protocolVersion: "2024-11-05",
-          capabilities: { elicitation: { form: {} } },
-          clientInfo: { name: "test-client", version: "1.0.0" }
-        }
-      });
-      await readMessage(); // initialize result
-      await sendMessage({ jsonrpc: "2.0", method: "notifications/initialized" });
-
+      await initialize();
+      // Minted in-test with the same secret the server child process inherited.
+      const { token } = mintDeleteConfirmation("any-event-id", "calendars/home", -60);
       await sendMessage({
         jsonrpc: "2.0",
         id: 2,
         method: "tools/call",
         params: {
           name: "delete_calendar_event",
-          arguments: { eventId: "declined-event-id" }
+          arguments: { eventId: "any-event-id", confirmationToken: token }
         }
       });
-
-      // Server pauses the tool call to request confirmation
-      const elicitationRequest = await readMessage();
-      expect(elicitationRequest.method).toBe("elicitation/create");
-      expect(elicitationRequest.params.message).toContain("declined-event-id");
-
-      // User declines
-      await sendMessage({
-        jsonrpc: "2.0",
-        id: elicitationRequest.id,
-        result: { action: "decline" }
-      });
-
       const callResponse = await readMessage();
+
       expect(callResponse.id).toBe(2);
       expect(callResponse.result.isError).toBe(true);
-      expect(callResponse.result.content[0].text).toContain("Deletion cancelled");
-      expect(callResponse.result.content[0].text).toContain("declined-event-id");
+      expect(callResponse.result.content[0].text).toContain("Confirmation token has expired");
+    } finally {
+      proc.kill();
+    }
+  });
+
+  test("should reject a confirmation token bound to a different event", async () => {
+    process.env.DELETE_CONFIRM_SECRET = "test-mcp-secret";
+    const { proc, readMessage, sendMessage, initialize } = await spawnStdioServer({
+      DELETE_CONFIRM_SECRET: "test-mcp-secret"
+    });
+
+    try {
+      await initialize();
+      const { token } = mintDeleteConfirmation("event-A", "calendars/home");
+      await sendMessage({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/call",
+        params: {
+          name: "delete_calendar_event",
+          arguments: { eventId: "event-B", confirmationToken: token }
+        }
+      });
+      const callResponse = await readMessage();
+
+      expect(callResponse.id).toBe(2);
+      expect(callResponse.result.isError).toBe(true);
+      expect(callResponse.result.content[0].text).toContain("does not match event ID 'event-B'");
     } finally {
       proc.kill();
     }

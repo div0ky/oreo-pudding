@@ -292,6 +292,84 @@ describe("MCP Server JSON-RPC E2E Integration", () => {
       await repository.delete(discEventId, credentials, defaultPath);
       console.log(`[E2E] Auto-discovered event ${discEventId} deleted successfully.`);
 
+      // 9. Two-step delete flow: create an event, preview it, then confirm deletion
+      const twoStepCreateResponse = await sendRequest({
+        jsonrpc: "2.0",
+        id: 8,
+        method: "tools/call",
+        params: {
+          name: "create_calendar_event",
+          arguments: {
+            title: "E2E Two-Step Delete Event",
+            description: "Created to exercise the delete confirmation flow.",
+            startDate,
+            endDate
+          }
+        }
+      });
+      expect(twoStepCreateResponse.id).toBe(8);
+      expect(twoStepCreateResponse.result.isError).not.toBe(true);
+      const twoStepIdMatch = twoStepCreateResponse.result.content[0].text.match(
+        /Domain Event ID: ([a-f0-9-]{36})/
+      );
+      expect(twoStepIdMatch).not.toBeNull();
+      const twoStepEventId = twoStepIdMatch[1];
+      console.log(`[E2E] Two-step delete event created with ID: ${twoStepEventId}`);
+
+      // 9a. Step 1: preview call without a token returns event details + token
+      const previewResponse = await sendRequest({
+        jsonrpc: "2.0",
+        id: 9,
+        method: "tools/call",
+        params: {
+          name: "delete_calendar_event",
+          arguments: { eventId: twoStepEventId }
+        }
+      });
+      expect(previewResponse.id).toBe(9);
+      expect(previewResponse.result.isError).not.toBe(true);
+      const previewBody = JSON.parse(previewResponse.result.content[0].text);
+      expect(previewBody.status).toBe("confirmation_required");
+      expect(previewBody.event.eventId).toBe(twoStepEventId);
+      expect(previewBody.event.title).toBe("E2E Two-Step Delete Event");
+      expect(previewBody.confirmationToken).toBeDefined();
+      expect(previewBody.expiresAt).toBeDefined();
+
+      // Event must still exist after the preview call
+      const stillThere = await repository.findById(
+        twoStepEventId,
+        credentials,
+        new CalendarPath(previewBody.event.calendarPath)
+      );
+      expect(stillThere).not.toBeNull();
+
+      // 9b. Step 2: confirm call with the token deletes the event
+      const confirmResponse = await sendRequest({
+        jsonrpc: "2.0",
+        id: 10,
+        method: "tools/call",
+        params: {
+          name: "delete_calendar_event",
+          arguments: {
+            eventId: twoStepEventId,
+            confirmationToken: previewBody.confirmationToken
+          }
+        }
+      });
+      expect(confirmResponse.id).toBe(10);
+      expect(confirmResponse.result.isError).not.toBe(true);
+      expect(confirmResponse.result.content[0].text).toContain(
+        `Event successfully deleted with Domain Event ID: ${twoStepEventId}`
+      );
+
+      // Verify the event is gone
+      const deletedCheck = await repository.findById(
+        twoStepEventId,
+        credentials,
+        new CalendarPath(previewBody.event.calendarPath)
+      );
+      expect(deletedCheck).toBeNull();
+
     } finally {
       // Force kill the subprocess to ensure no hanging processes
       proc.kill();

@@ -10,7 +10,7 @@ An enterprise-grade Model Context Protocol (MCP) server built with **Bun** that 
 
 ## 🚀 Key Features
 
-*   **⚡ Native CalDAV Protocol Sync**: Full support for listing calendars, retrieving events, creating, moving/rescheduling, and updating events directly on Apple iCloud servers.
+*   **⚡ Native CalDAV Protocol Sync**: Full support for listing calendars, retrieving events, creating, moving/rescheduling, updating, and deleting events directly on Apple iCloud servers.
 *   **📍 Auto-Discovery & Intelligent Routing**: Automatically resolves iCloud user principals, calendar-home-sets, and lists calendars under the hood. For commands missing a calendar path, it employs an intelligent scoring heuristic to automatically pick the most suitable default calendar (e.g., scoring `Home` or `Personal` highest).
 *   **⏰ Timezone-Aware Parser**: Native handling of timezone normalizations. Defaults to `America/Chicago` (configurable). Correctly parses floating/local ISO-8601 datetimes without timezone indicators inside the context of the target IANA timezone using [TimeZoneHelper](file:///Users/ajspurlock/git/wizards/oreo-pudding/src/application/utils/TimeZoneHelper.ts), preventing incorrect offset shifts.
 *   **💨 Stale-While-Revalidate (SWR) Cache**: Low-latency responses utilizing in-memory SWR caching for both calendar lists (48h TTL) and events (5m TTL) inside [CalDavRepository](file:///Users/ajspurlock/git/wizards/oreo-pudding/src/infrastructure/calendar/repository/CalDavRepository.ts). Spawns asynchronous background fetches on cache hits to guarantee fresh data without blocking execution.
@@ -154,6 +154,15 @@ Quickly reschedules an existing event to a new start date/time (optionally keepi
     *   `endDate` (string, optional): New ISO 8601 end date/time. If omitted, the event's original duration is preserved.
     *   `calendarPath` (string, optional): The calendar path where the event is located. If omitted, the server will auto-discover the correct calendar.
     *   `timezone` (string, optional): Target timezone.
+
+### 7. `delete_calendar_event`
+Permanently deletes an existing event. This action cannot be undone, so deletion requires a host-agnostic two-step confirmation that works on any MCP client:
+1.  Call **without** `confirmationToken` to preview the event. Nothing is deleted; the response contains the event details plus a signed `confirmationToken` (valid 10 minutes).
+2.  After the user confirms in chat, call **again** with the `confirmationToken` to execute the deletion.
+*   **Arguments**:
+    *   `eventId` (string, required): The unique event ID (UID).
+    *   `calendarPath` (string, optional): The calendar path where the event is located. If omitted, the server will auto-discover the correct calendar.
+    *   `confirmationToken` (string, optional): Token from a step-1 preview call. Omit for preview; provide to delete.
 
 ---
 

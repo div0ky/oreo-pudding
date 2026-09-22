@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Added the `delete_calendar_event` MCP tool with a host-agnostic two-step confirmation: a preview call returns event details plus a signed HMAC confirmation token, and a second call presenting the token executes the deletion.
+- Added the `GetCalendarEventById` query for single-event previews with calendar auto-discovery.
+- Added optional `DELETE_CONFIRM_SECRET` environment variable for signing delete-confirmation tokens (falls back to `BEARER_TOKEN`).
+
 ## [1.1.0] - 2026-06-07
 
 ### Added

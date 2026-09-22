@@ -21,6 +21,9 @@ import { MoveCalendarEventCommand } from "./application/calendar/commands/MoveCa
 import { MoveCalendarEventCommandHandler } from "./application/calendar/commands/MoveCalendarEventCommandHandler";
 import { DeleteCalendarEventCommand } from "./application/calendar/commands/DeleteCalendarEventCommand";
 import { DeleteCalendarEventCommandHandler } from "./application/calendar/commands/DeleteCalendarEventCommandHandler";
+import { GetCalendarEventByIdQuery, type CalendarEventDetailDto } from "./application/calendar/queries/GetCalendarEventByIdQuery";
+import { GetCalendarEventByIdQueryHandler } from "./application/calendar/queries/GetCalendarEventByIdQueryHandler";
+import { mintDeleteConfirmation, verifyDeleteConfirmation } from "./interface/mcp/DeleteConfirmation";
 import { CalDavRepository } from "./infrastructure/calendar/repository/CalDavRepository";
 import { ICalSerializationStrategy } from "./infrastructure/calendar/serialization/ICalSerializationStrategy";
 import { InvalidDateRangeException } from "./domain/calendar/exceptions/InvalidDateRangeException";
@@ -54,6 +57,8 @@ mediator.registerQuery(RetrieveAllCalendarEventsQuery, retrieveAllHandler);
 const busyFeedSerializer = new BusyFeedSerializationStrategy();
 const busyFeedHandler = new GetBusyFeedQueryHandler(repository, busyFeedSerializer);
 mediator.registerQuery(GetBusyFeedQuery, busyFeedHandler);
+const getByIdHandler = new GetCalendarEventByIdQueryHandler(repository);
+mediator.registerQuery(GetCalendarEventByIdQuery, getByIdHandler);
 /**
  * Retrieves Apple ID and App-Specific Password credentials from environment variables and validates their format.
  */
@@ -212,7 +217,8 @@ export const moveCalendarEventSchema = z.object({
 
 export const deleteCalendarEventSchema = z.object({
   eventId: z.string().min(1, "Event ID must not be empty."),
-  calendarPath: z.string().optional()
+  calendarPath: z.string().optional(),
+  confirmationToken: z.string().optional()
 });
 
 // 3. Configure the MCP Server instance factory
@@ -399,7 +405,7 @@ function setupMcpHandlers(s: Server) {
       },
       {
         name: "delete_calendar_event",
-        description: "Permanently deletes an existing event from Apple Calendar via CalDAV. This action cannot be undone and requires explicit user confirmation.",
+        description: "Permanently deletes an existing event from Apple Calendar via CalDAV. This action cannot be undone. Two-step confirmation: first call WITHOUT confirmationToken to preview the event and receive a confirmationToken (nothing is deleted); after the user confirms in chat, call AGAIN with the confirmationToken to execute the deletion.",
         inputSchema: {
           type: "object",
           properties: {
@@ -410,6 +416,10 @@ function setupMcpHandlers(s: Server) {
             calendarPath: {
               type: "string",
               description: "The calendar path where the event is located. If omitted, it will be searched/auto-discovered. [optional]"
+            },
+            confirmationToken: {
+              type: "string",
+              description: "Token from a previous preview call. Omit for step 1 (preview); provide for step 2 (execute deletion). [optional]"
             }
           },
           required: ["eventId"]
@@ -822,71 +832,72 @@ s.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       const {
         eventId,
-        calendarPath
+        calendarPath,
+        confirmationToken
       } = parsed.data;
 
-      // Request explicit human confirmation before performing the irreversible delete.
-      // Fails closed: any non-acceptance (decline/cancel) or elicitation failure
-      // (e.g. client without elicitation support) refuses the deletion.
-      let elicitation: { action: string; content?: Record<string, unknown> };
-      try {
-        elicitation = await s.elicitInput({
-          mode: "form",
-          message: `Permanently delete calendar event '${eventId}'? This action cannot be undone.`,
-          requestedSchema: {
-            type: "object",
-            properties: {
-              confirmation: {
-                type: "string",
-                title: "Confirmation",
-                description: "Select DELETE to permanently delete this event",
-                enum: ["DELETE"]
+      // Step 2: a confirmationToken was provided, verify it and execute the deletion.
+      // The token cryptographically binds the event ID and calendar path, so the
+      // agent can only complete a deletion it previously previewed in step 1.
+      if (confirmationToken) {
+        const verification = verifyDeleteConfirmation(confirmationToken, eventId);
+        if (!verification.valid || !verification.payload) {
+          const reason = verification.reason === "expired"
+            ? "Confirmation token has expired."
+            : verification.reason === "mismatch"
+              ? `Confirmation token does not match event ID '${eventId}'.`
+              : "Confirmation token is invalid.";
+          return {
+            content: [
+              {
+                type: "text",
+                text: `${reason} Event '${eventId}' was not deleted. Request a fresh deletion preview by calling delete_calendar_event without a confirmationToken.`
               }
-            },
-            required: ["confirmation"]
-          }
-        });
-      } catch (elicitError: any) {
+            ],
+            isError: true
+          };
+        }
+
+        const command = new DeleteCalendarEventCommand(
+          verification.payload.eventId,
+          verification.payload.calendarPath
+        );
+
+        const deletedEventId = await mediator.send<string>(command);
+
         return {
           content: [
             {
               type: "text",
-              text: `Deletion refused: unable to obtain user confirmation (${elicitError.message || elicitError}). This client may not support elicitation.`
+              text: `Event successfully deleted with Domain Event ID: ${deletedEventId}`
             }
-          ],
-          isError: true
+          ]
         };
       }
 
-      if (elicitation.action !== "accept" || elicitation.content?.confirmation !== "DELETE") {
-        const reason = elicitation.action === "decline"
-          ? "declined by user"
-          : elicitation.action === "cancel"
-            ? "cancelled by user"
-            : "missing explicit confirmation";
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Deletion cancelled (${reason}). Event '${eventId}' was not deleted.`
-            }
-          ],
-          isError: true
-        };
-      }
-
-      const command = new DeleteCalendarEventCommand(
-        eventId,
-        calendarPath
+      // Step 1: no confirmationToken, return a preview plus a signed token.
+      // Nothing is deleted here; the agent must present the token in a second
+      // call after the user confirms in chat.
+      const preview = await mediator.query<CalendarEventDetailDto>(
+        new GetCalendarEventByIdQuery(eventId, calendarPath)
       );
 
-      const deletedEventId = await mediator.send<string>(command);
+      const { token, expiresAt } = mintDeleteConfirmation(
+        preview.eventId,
+        preview.calendarPath
+      );
 
       return {
         content: [
           {
             type: "text",
-            text: `Event successfully deleted with Domain Event ID: ${deletedEventId}`
+            text: JSON.stringify({
+              status: "confirmation_required",
+              message: `Event '${preview.eventId}' has NOT been deleted. Show this preview to the user; only after the user confirms, call delete_calendar_event again with eventId and this confirmationToken to permanently delete the event.`,
+              event: preview,
+              confirmationToken: token,
+              expiresAt
+            }, null, 2)
           }
         ]
       };
