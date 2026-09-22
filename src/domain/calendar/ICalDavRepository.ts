@@ -26,6 +26,15 @@ export interface ICalDavRepository {
   ): Promise<CalendarEvent | null>;
 
   /**
+   * Deletes a calendar event by its ID from a specific calendar path.
+   */
+  delete(
+    eventId: string,
+    credentials: AppleCredentials,
+    calendarPath: CalendarPath
+  ): Promise<void>;
+
+  /**
    * Retrieves events from a calendar path matching the optional date range.
    */
   find(

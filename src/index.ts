@@ -19,6 +19,8 @@ import { UpdateCalendarEventCommand } from "./application/calendar/commands/Upda
 import { UpdateCalendarEventCommandHandler } from "./application/calendar/commands/UpdateCalendarEventCommandHandler";
 import { MoveCalendarEventCommand } from "./application/calendar/commands/MoveCalendarEventCommand";
 import { MoveCalendarEventCommandHandler } from "./application/calendar/commands/MoveCalendarEventCommandHandler";
+import { DeleteCalendarEventCommand } from "./application/calendar/commands/DeleteCalendarEventCommand";
+import { DeleteCalendarEventCommandHandler } from "./application/calendar/commands/DeleteCalendarEventCommandHandler";
 import { CalDavRepository } from "./infrastructure/calendar/repository/CalDavRepository";
 import { ICalSerializationStrategy } from "./infrastructure/calendar/serialization/ICalSerializationStrategy";
 import { InvalidDateRangeException } from "./domain/calendar/exceptions/InvalidDateRangeException";
@@ -39,10 +41,12 @@ const retrieveHandler = new RetrieveCalendarEventsQueryHandler(repository);
 const listCalendarsHandler = new ListCalendarsQueryHandler(repository);
 const updateHandler = new UpdateCalendarEventCommandHandler(repository, serializationStrategy);
 const moveHandler = new MoveCalendarEventCommandHandler(repository, serializationStrategy);
+const deleteHandler = new DeleteCalendarEventCommandHandler(repository);
 
 mediator.registerCommand(CreateCalendarEventCommand, createHandler);
 mediator.registerCommand(MoveCalendarEventCommand, moveHandler);
 mediator.registerCommand(UpdateCalendarEventCommand, updateHandler);
+mediator.registerCommand(DeleteCalendarEventCommand, deleteHandler);
 mediator.registerQuery(RetrieveCalendarEventsQuery, retrieveHandler);
 mediator.registerQuery(ListCalendarsQuery, listCalendarsHandler);
 const retrieveAllHandler = new RetrieveAllCalendarEventsQueryHandler(repository);
@@ -204,6 +208,11 @@ export const moveCalendarEventSchema = z.object({
   endDate: isoDateTimeSchema.optional(),
   calendarPath: z.string().optional(),
   timezone: z.string().optional()
+});
+
+export const deleteCalendarEventSchema = z.object({
+  eventId: z.string().min(1, "Event ID must not be empty."),
+  calendarPath: z.string().optional()
 });
 
 // 3. Configure the MCP Server instance factory
@@ -386,6 +395,30 @@ function setupMcpHandlers(s: Server) {
             }
           },
           required: ["eventId", "startDate"]
+        }
+      },
+      {
+        name: "delete_calendar_event",
+        description: "Permanently deletes an existing event from Apple Calendar via CalDAV. This action cannot be undone and requires explicit user confirmation.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            eventId: {
+              type: "string",
+              description: "The unique event ID (UID) of the event to delete"
+            },
+            calendarPath: {
+              type: "string",
+              description: "The calendar path where the event is located. If omitted, it will be searched/auto-discovered. [optional]"
+            }
+          },
+          required: ["eventId"]
+        },
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: true,
+          idempotentHint: false,
+          openWorldHint: true
         }
       },
       {
@@ -762,6 +795,107 @@ s.setRequestHandler(CallToolRequestSchema, async (request) => {
           {
             type: "text",
             text: `Failed to move calendar event: ${error.message || error}`
+          }
+        ],
+        isError: true
+      };
+    }
+  }
+
+  if (toolName === "delete_calendar_event") {
+    try {
+      const parsed = deleteCalendarEventSchema.safeParse(request.params.arguments);
+      if (!parsed.success) {
+        const details = parsed.error.issues
+          .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+          .join("; ");
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Validation Error: ${details}`
+            }
+          ],
+          isError: true
+        };
+      }
+
+      const {
+        eventId,
+        calendarPath
+      } = parsed.data;
+
+      // Request explicit human confirmation before performing the irreversible delete.
+      // Fails closed: any non-acceptance (decline/cancel) or elicitation failure
+      // (e.g. client without elicitation support) refuses the deletion.
+      let elicitation: { action: string; content?: Record<string, unknown> };
+      try {
+        elicitation = await s.elicitInput({
+          mode: "form",
+          message: `Permanently delete calendar event '${eventId}'? This action cannot be undone.`,
+          requestedSchema: {
+            type: "object",
+            properties: {
+              confirmation: {
+                type: "string",
+                title: "Confirmation",
+                description: "Select DELETE to permanently delete this event",
+                enum: ["DELETE"]
+              }
+            },
+            required: ["confirmation"]
+          }
+        });
+      } catch (elicitError: any) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Deletion refused: unable to obtain user confirmation (${elicitError.message || elicitError}). This client may not support elicitation.`
+            }
+          ],
+          isError: true
+        };
+      }
+
+      if (elicitation.action !== "accept" || elicitation.content?.confirmation !== "DELETE") {
+        const reason = elicitation.action === "decline"
+          ? "declined by user"
+          : elicitation.action === "cancel"
+            ? "cancelled by user"
+            : "missing explicit confirmation";
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Deletion cancelled (${reason}). Event '${eventId}' was not deleted.`
+            }
+          ],
+          isError: true
+        };
+      }
+
+      const command = new DeleteCalendarEventCommand(
+        eventId,
+        calendarPath
+      );
+
+      const deletedEventId = await mediator.send<string>(command);
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Event successfully deleted with Domain Event ID: ${deletedEventId}`
+          }
+        ]
+      };
+    } catch (error: any) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Failed to delete calendar event: ${error.message || error}`
           }
         ],
         isError: true

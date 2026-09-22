@@ -177,6 +177,9 @@ describe("Application Layer: CQRS Pipeline Queries and Commands", () => {
     async save(event, payload, credentials, calendarPath) {
       eventsStore.set(event.id.value, event);
     },
+    async delete(eventId, credentials, calendarPath) {
+      eventsStore.delete(eventId);
+    },
     async findById(eventId, credentials, calendarPath) {
       return eventsStore.get(eventId) || null;
     },
@@ -547,6 +550,7 @@ describe("RetrieveAllCalendarEventsQueryHandler", () => {
 
     const mockRepo: ICalDavRepository = {
       async save() {},
+      async delete() {},
       async findById() { return null; },
       async find(credentials, calendarPath) {
         if (calendarPath.value === "calendars/work") {
@@ -598,6 +602,7 @@ describe("RetrieveAllCalendarEventsQueryHandler", () => {
 
     const mockRepo: ICalDavRepository = {
       async save() {},
+      async delete() {},
       async findById() { return null; },
       async find() { return [event]; },
       async discoverCalendars() {
@@ -626,6 +631,7 @@ describe("RetrieveAllCalendarEventsQueryHandler", () => {
   test("should omit specified calendars", async () => {
     const mockRepo: ICalDavRepository = {
       async save() {},
+      async delete() {},
       async findById() { return null; },
       async find() { return []; },
       async discoverCalendars() {
@@ -656,6 +662,7 @@ describe("RetrieveAllCalendarEventsQueryHandler", () => {
   test("should omit calendars using case-insensitive substring matching", async () => {
     const mockRepo: ICalDavRepository = {
       async save() {},
+      async delete() {},
       async findById() { return null; },
       async find() { return []; },
       async discoverCalendars() {
@@ -706,6 +713,7 @@ describe("RetrieveAllCalendarEventsQueryHandler", () => {
 
     const mockRepo: ICalDavRepository = {
       async save() {},
+      async delete() {},
       async findById() { return null; },
       async find() { return mockEvents; },
       async discoverCalendars() { return mockCalendars; },

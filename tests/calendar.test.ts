@@ -177,6 +177,7 @@ describe("Application Layer CQRS Command Pipeline", () => {
         savedCredentials = credentials;
         savedPath = calendarPath;
       },
+      async delete() {},
       async findById(eventId, credentials, calendarPath) {
         return null;
       },
@@ -247,6 +248,7 @@ describe("Application Layer CQRS Command Pipeline", () => {
         savedEvent = event;
         savedPayload = payload;
       },
+      async delete() {},
       async findById(eventId, credentials, calendarPath) {
         if (eventId === "existing-event-123") return existingEvent;
         return null;
@@ -312,6 +314,7 @@ describe("Application Layer CQRS Command Pipeline", () => {
         savedEvent = event;
         savedPath = calendarPath;
       },
+      async delete() {},
       async findById(eventId, credentials, calendarPath) {
         // Only return if it's the second calendar path
         if (eventId === "search-event-123" && calendarPath.value === "user123/calendars/work") {
@@ -364,6 +367,7 @@ describe("Application Layer CQRS Command Pipeline", () => {
   test("MoveCalendarEventCommandHandler should throw error if event not found in any calendar", async () => {
     const mockRepo: ICalDavRepository = {
       async save(event, payload, credentials, calendarPath) {},
+      async delete() {},
       async findById(eventId, credentials, calendarPath) {
         return null;
       },

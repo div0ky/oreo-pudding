@@ -39,22 +39,14 @@ describe("Live CalDAV Repository Integration", () => {
     await repository.save(event, payload, credentials, path);
     console.log(`[Test] Event ${event.id.value} created successfully.`);
 
-    // 3. Clean up: Delete the event via direct HTTP DELETE
+    // 3. Clean up: Delete the event via the repository (sends DELETE to CalDAV)
     console.log(`[Test] Cleaning up live event ${event.id.value}...`);
-    const cleanPath = TEST_CALENDAR_PATH.startsWith("/") ? TEST_CALENDAR_PATH : `/${TEST_CALENDAR_PATH}`;
-    const url = `https://caldav.icloud.com${cleanPath}/${event.id.value}.ics`;
+    await repository.delete(event.id.value, credentials, path);
+    console.log(`[Test] Event ${event.id.value} deleted successfully.`);
 
-    const headers = new Headers();
-    headers.set("Authorization", credentials.toBasicAuthHeader());
-    headers.set("User-Agent", "Oreo-Pudding-CalDAV/1.0");
-
-    const deleteResponse = await fetch(url, {
-      method: "DELETE",
-      headers
-    });
-
-    console.log(`[Test] Clean up response status: ${deleteResponse.status}`);
-    expect(deleteResponse.status).toBeLessThan(300); // Should be 2xx (200 or 204 usually)
+    // 4. Verify the event is gone
+    const deleted = await repository.findById(event.id.value, credentials, path);
+    expect(deleted).toBeNull();
   });
 });
 
@@ -146,6 +138,11 @@ describe("MCP Server JSON-RPC E2E Integration", () => {
       const listCalendarsTool = tools.find((t: any) => t.name === "list_calendars");
       expect(listCalendarsTool).toBeDefined();
       expect(listCalendarsTool.description).toContain("Lists all available calendars");
+
+      const deleteEventTool = tools.find((t: any) => t.name === "delete_calendar_event");
+      expect(deleteEventTool).toBeDefined();
+      expect(deleteEventTool.annotations).toBeDefined();
+      expect(deleteEventTool.annotations.destructiveHint).toBe(true);
 
       // 4. Call tool with missing title parameter -> should return Validation Error
       const badCallResponse = await sendRequest({
@@ -258,20 +255,10 @@ describe("MCP Server JSON-RPC E2E Integration", () => {
       // 7. Clean up: Delete the created event from the live calendar
       console.log(`[E2E] Cleaning up E2E event ${createdEventId}...`);
       const credentials = new AppleCredentials(appleId!, appSpecificPassword!);
-      const cleanPath = defaultCalPath.startsWith("/") ? defaultCalPath : `/${defaultCalPath}`;
-      const url = `https://caldav.icloud.com${cleanPath}/${createdEventId}.ics`;
-
-      const headers = new Headers();
-      headers.set("Authorization", credentials.toBasicAuthHeader());
-      headers.set("User-Agent", "Oreo-Pudding-CalDAV/1.0");
-
-      const deleteResponse = await fetch(url, {
-        method: "DELETE",
-        headers
-      });
-
-      console.log(`[E2E] Clean up response status: ${deleteResponse.status}`);
-      expect(deleteResponse.status).toBeLessThan(300);
+      const repository = new CalDavRepository();
+      const defaultPath = new CalendarPath(defaultCalPath);
+      await repository.delete(createdEventId, credentials, defaultPath);
+      console.log(`[E2E] E2E event ${createdEventId} deleted successfully.`);
 
       // 8. Call create_calendar_event without calendarPath (auto-discovery test)
       console.log("[E2E] Testing calendar path auto-discovery...");
@@ -302,14 +289,8 @@ describe("MCP Server JSON-RPC E2E Integration", () => {
       console.log(`[E2E] Auto-discovered event created successfully with ID: ${discEventId}`);
 
       // Clean up auto-discovered event using the same dynamically discovered path
-      const cleanDiscPath = defaultCalPath.startsWith("/") ? defaultCalPath : `/${defaultCalPath}`;
-      const discUrl = `https://caldav.icloud.com${cleanDiscPath}/${discEventId}.ics`;
-      const discDeleteResponse = await fetch(discUrl, {
-        method: "DELETE",
-        headers
-      });
-      console.log(`[E2E] Auto-discovered event clean up response status: ${discDeleteResponse.status}`);
-      expect(discDeleteResponse.status).toBeLessThan(300);
+      await repository.delete(discEventId, credentials, defaultPath);
+      console.log(`[E2E] Auto-discovered event ${discEventId} deleted successfully.`);
 
     } finally {
       // Force kill the subprocess to ensure no hanging processes

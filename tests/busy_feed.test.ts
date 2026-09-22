@@ -238,6 +238,7 @@ describe("GetBusyFeedQueryHandler", () => {
 
     const mockRepo: ICalDavRepository = {
       async save() {},
+      async delete() {},
       async findById() {
         return null;
       },
@@ -304,6 +305,7 @@ describe("GetBusyFeedQueryHandler", () => {
 
     const mockRepo: ICalDavRepository = {
       async save() {},
+      async delete() {},
       async findById() {
         return null;
       },

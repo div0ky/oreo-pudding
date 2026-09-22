@@ -95,6 +95,50 @@ export class CalDavRepository implements ICalDavRepository {
   }
 
   /**
+   * Deletes a calendar event from the iCloud CalDAV server.
+   * Executes an HTTP DELETE against https://caldav.icloud.com/ using Bun's native fetch.
+   */
+  public async delete(
+    eventId: string,
+    credentials: AppleCredentials,
+    calendarPath: CalendarPath
+  ): Promise<void> {
+    // Invalidate events cache to prevent stale reads
+    this.invalidateEventCaches(credentials.appleId, calendarPath.value);
+
+    await this.deleteLive(eventId, credentials, calendarPath);
+  }
+
+  private async deleteLive(
+    eventId: string,
+    credentials: AppleCredentials,
+    calendarPath: CalendarPath
+  ): Promise<void> {
+    // Formulate clean path
+    const path = calendarPath.value.startsWith("/")
+      ? calendarPath.value
+      : `/${calendarPath.value}`;
+
+    const url = `https://caldav.icloud.com${path}/${eventId}.ics`;
+
+    const headers = new Headers();
+    headers.set("Authorization", credentials.toBasicAuthHeader());
+    headers.set("User-Agent", "Oreo-Pudding-CalDAV/1.0");
+
+    const response = await fetch(url, {
+      method: "DELETE",
+      headers
+    });
+
+    if (!response.ok) {
+      const responseText = await response.text().catch(() => "");
+      throw new Error(
+        `CalDAV DELETE to '${url}' failed with status ${response.status} (${response.statusText}). Server Response: ${responseText}`
+      );
+    }
+  }
+
+  /**
    * Retrieves a single calendar event by its eventId (UID) from the CalDAV server.
    */
   public async findById(
